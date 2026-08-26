@@ -1,0 +1,65 @@
+{
+  "name": "patch-manager",
+  "version": "1.0.0",
+  "description": "Automated patch management for Outlook-received software patches",
+  "main": "electron.js",
+  "scripts": {
+    "dev": "concurrently -k -n VITE,ELECTRON -c cyan,yellow \"vite\" \"wait-on tcp:5173 && cross-env VITE_DEV=1 electron .\"",
+    "start": "electron .",
+    "build": "vite build",
+    "dist": "vite build && electron-builder",
+    "rebuild": "electron-rebuild -f -w better-sqlite3"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.10",
+    "better-sqlite3": "^9.4.3",
+    "electron-store": "^8.2.0",
+    "fast-xml-parser": "^4.3.4",
+    "node-unrar-js": "^2.0.0",
+    "ssh2": "^1.15.0",
+    "ssh2-sftp-client": "^10.0.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.2.1",
+    "concurrently": "^8.2.2",
+    "cross-env": "^10.1.0",
+    "electron": "^29.1.4",
+    "electron-builder": "^24.13.3",
+    "electron-rebuild": "^3.2.9",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "vite": "^5.1.6",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.patchmanager.app",
+    "productName": "Patch Manager",
+    "win": {
+      "target": "nsis",
+      "icon": "resources/icon.ico"
+    },
+    "files": [
+      "dist/**/*",
+      "electron.js",
+      "preload.js",
+      "src/main/**/*",
+      "resources/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "src/scripts",
+        "to": "scripts"
+      }
+    ],
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "allowScripts": {
+    "electron@29.4.6": true,
+    "esbuild@0.21.5": true,
+    "better-sqlite3@9.6.0": true,
+    "ssh2@1.17.0": true
+  }
+}

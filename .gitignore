@@ -1,0 +1,20 @@
+node_modules/
+dist/
+
+# SQLite DB and WAL files
+*.db
+*.db-shm
+*.db-wal
+
+# Deployment backup files created at runtime
+*.bak-*
+
+# Environment / secrets
+.env
+
+# Windows artefacts
+Thumbs.db
+Desktop.ini
+
+# macOS artefacts
+.DS_Store

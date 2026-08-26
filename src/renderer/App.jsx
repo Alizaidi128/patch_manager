@@ -1,0 +1,208 @@
+import { useState, useEffect } from 'react'
+import Sidebar from './components/Sidebar'
+import Settings from './components/Settings'
+import AppConfig from './components/AppConfig'
+import PatchInbox from './components/PatchInbox'
+import FetchDialog from './components/FetchDialog'
+import ManualPathDialog from './components/ManualPathDialog'
+import MergePreviewDialog from './components/MergePreviewDialog'
+import DeployDialog from './components/DeployDialog'
+import DeployLog from './components/DeployLog'
+
+function PlaceholderView({ icon, title, hint }) {
+  return (
+    <div className="placeholder-screen">
+      <div className="placeholder-icon">{icon}</div>
+      <p>{title}</p>
+      {hint && <p className="hint">{hint}</p>}
+    </div>
+  )
+}
+
+export default function App() {
+  const [view, setView]               = useState('dashboard')
+  const [apps, setApps]               = useState([])
+  const [appsLoaded, setAppsLoaded]   = useState(false)
+  const [selectedAppId, setSelectedAppId] = useState(null)
+  const [editAppId, setEditAppId]     = useState(null)
+
+  // Dialogs
+  const [showFetch, setShowFetch]         = useState(false)
+  const [missingPaths, setMissingPaths]   = useState([])
+  const [mergeTarget, setMergeTarget]     = useState(null)
+  const [deployPatchId, setDeployPatchId] = useState(null)
+
+  // Inbox refresh counter
+  const [inboxKey, setInboxKey] = useState(0)
+  const refreshInbox = () => setInboxKey(k => k + 1)
+
+  useEffect(() => { loadApps() }, [])
+
+  function loadApps() {
+    window.api.invoke('app:list')
+      .then(list => { setApps(list || []); setAppsLoaded(true) })
+      .catch(() => setAppsLoaded(true))
+  }
+
+  function handleSelectApp(id) {
+    setSelectedAppId(id)
+    setView('dashboard')
+    setEditAppId(null)
+  }
+
+  function handleNavigate(v) {
+    setView(v)
+    if (v !== 'dashboard') setSelectedAppId(null)
+    setEditAppId(null)
+  }
+
+  function handleAddApp() { setEditAppId(null); setView('app-config') }
+  function handleEditApp(id) { setEditAppId(id); setView('app-config') }
+
+  function handleAppSaved(savedApp) {
+    loadApps(); setSelectedAppId(savedApp.id); setView('dashboard'); setEditAppId(null)
+  }
+
+  function handleAppDeleted() {
+    loadApps(); setSelectedAppId(null); setView('dashboard'); setEditAppId(null)
+  }
+
+  function handleConfigCancel() { setEditAppId(null); setView('dashboard') }
+
+  function handleFetchComplete(result) {
+    refreshInbox()
+    if (result?.missingPaths?.length) setMissingPaths(result.missingPaths)
+  }
+
+  const selectedApp = apps.find(a => a.id === selectedAppId)
+  const editApp     = editAppId != null ? apps.find(a => a.id === editAppId) : null
+
+  function renderContent() {
+    switch (view) {
+
+      case 'settings':
+        return (
+          <>
+            <div className="content-header"><h2>Settings</h2></div>
+            <div className="content-body"><Settings /></div>
+          </>
+        )
+
+      case 'logs':
+        return (
+          <>
+            <div className="content-header">
+              <h2>Deployment Log</h2>
+            </div>
+            <div className="content-body" style={{ padding: 0 }}>
+              <DeployLog apps={apps} />
+            </div>
+          </>
+        )
+
+      case 'app-config':
+        return (
+          <>
+            <div className="content-header">
+              <h2>{editAppId == null ? 'Add App' : 'Edit App'}</h2>
+            </div>
+            <div className="content-body">
+              <AppConfig
+                app={editApp || null}
+                onSaved={handleAppSaved}
+                onDeleted={handleAppDeleted}
+                onCancel={handleConfigCancel}
+              />
+            </div>
+          </>
+        )
+
+      default: // dashboard
+        if (!selectedAppId) {
+          return (
+            <>
+              <div className="content-header"><h2>Patch Manager</h2></div>
+              <div className="content-body">
+                {appsLoaded && apps.length === 0
+                  ? <PlaceholderView icon="📬" title="No apps configured yet"
+                      hint='Click "+ Add App" in the sidebar to get started' />
+                  : <PlaceholderView icon="📬" title="Select an app from the sidebar"
+                      hint="Then click Fetch to pull patches from Outlook" />
+                }
+              </div>
+            </>
+          )
+        }
+        return (
+          <>
+            <div className="content-header">
+              <h2>{selectedApp?.name} — Patch Inbox</h2>
+              <div className="content-header-actions">
+                <button className="btn btn-secondary btn-sm" onClick={() => handleEditApp(selectedAppId)}>
+                  ⚙️ Edit App
+                </button>
+              </div>
+            </div>
+            <div className="content-body" style={{ padding: 0, overflow: 'hidden' }}>
+              <PatchInbox
+                app={selectedApp}
+                onFetch={() => setShowFetch(true)}
+                onMerge={target => setMergeTarget(target)}
+                onDeploy={patchId => setDeployPatchId(patchId)}
+                refreshKey={inboxKey}
+              />
+            </div>
+          </>
+        )
+    }
+  }
+
+  return (
+    <div className="app-layout">
+      <Sidebar
+        apps={apps}
+        selectedAppId={selectedAppId}
+        activeView={view}
+        onSelectApp={handleSelectApp}
+        onEditApp={handleEditApp}
+        onAddApp={handleAddApp}
+        onNavigate={handleNavigate}
+      />
+      <main className="main-content">
+        {renderContent()}
+      </main>
+
+      {showFetch && (
+        <FetchDialog
+          apps={apps}
+          onClose={() => setShowFetch(false)}
+          onComplete={result => { setShowFetch(false); handleFetchComplete(result) }}
+        />
+      )}
+
+      {missingPaths.length > 0 && (
+        <ManualPathDialog
+          items={missingPaths}
+          onClose={() => setMissingPaths([])}
+          onComplete={() => { setMissingPaths([]); refreshInbox() }}
+        />
+      )}
+
+      {mergeTarget && (
+        <MergePreviewDialog
+          patchFileId={mergeTarget.patchFileId}
+          onClose={() => setMergeTarget(null)}
+          onApplied={() => { setMergeTarget(null); refreshInbox() }}
+        />
+      )}
+
+      {deployPatchId && (
+        <DeployDialog
+          patchId={deployPatchId}
+          onClose={() => setDeployPatchId(null)}
+          onDeployed={() => { setDeployPatchId(null); refreshInbox() }}
+        />
+      )}
+    </div>
+  )
+}

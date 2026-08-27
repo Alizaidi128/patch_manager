@@ -19,9 +19,9 @@ function getNextSequenceFolder(dateFolder) {
   return existing.length === 0 ? 1 : Math.max(...existing) + 1
 }
 
-function createPatchFolder() {
+function createPatchFolder(emailDate) {
   const root       = getPatchRootDir()
-  const dateStr    = formatDateFolder()
+  const dateStr    = formatDateFolder(emailDate || new Date())
   const dateFolder = path.join(root, dateStr)
   const seq        = getNextSequenceFolder(dateFolder)
   const seqFolder  = path.join(dateFolder, String(seq))

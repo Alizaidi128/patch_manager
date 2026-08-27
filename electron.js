@@ -1,5 +1,9 @@
 const { app, BrowserWindow, ipcMain } = require('electron')
 const path = require('path')
+const log = require('./src/main/utils/logger')
+
+process.on('uncaughtException', err => log.error('uncaughtException', err))
+process.on('unhandledRejection', (reason) => log.error('unhandledRejection', reason))
 
 let mainWindow
 
@@ -20,12 +24,11 @@ function createWindow() {
     backgroundColor: '#1e1e1e'
   })
 
-  const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production'
+  const isDevMode = !app.isPackaged && process.argv.includes('--dev')
   const distIndex = path.join(__dirname, 'dist', 'renderer', 'index.html')
 
-  if (isDev && process.env.VITE_DEV === '1') {
+  if (isDevMode) {
     mainWindow.loadURL('http://localhost:5173')
-    mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
     mainWindow.loadFile(distIndex)
   }
@@ -36,6 +39,7 @@ function createWindow() {
 app.whenReady().then(() => {
   const { initializeDb } = require('./src/main/db/schema')
   initializeDb()
+  log.info('DB initialized. Log file:', log.logFile)
 
   const { registerHandlers } = require('./src/main/ipc/handlers')
   registerHandlers()

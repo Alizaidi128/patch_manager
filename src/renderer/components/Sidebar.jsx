@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-export default function Sidebar({ apps, selectedAppId, activeView, onSelectApp, onEditApp, onAddApp, onNavigate }) {
+export default function Sidebar({ apps, selectedAppId, activeView, theme, onToggleTheme, onSelectApp, onEditApp, onAddApp, onNavigate }) {
   const [hoveredId, setHoveredId] = useState(null)
 
   const activeApps   = apps.filter(a => a.is_active)
@@ -36,6 +36,13 @@ export default function Sidebar({ apps, selectedAppId, activeView, onSelectApp, 
     <aside className="sidebar">
       <div className="sidebar-header">
         <h1>Patch Manager</h1>
+        <button
+          className="theme-toggle"
+          onClick={onToggleTheme}
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {theme === 'dark' ? '☀️' : '🌙'}
+        </button>
       </div>
 
       <div className="app-list">

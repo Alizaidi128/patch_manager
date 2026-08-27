@@ -29,6 +29,7 @@ function sftpOpts(app) {
   const opts = { host: app.server_host, port: app.server_port || 22, username: app.server_user, readyTimeout: 20000, retries: 0 }
   if (app.server_key_path) opts.privateKey = fs.readFileSync(app.server_key_path)
   else opts.password = app.server_password
+  if (app.sftp_server_path) opts.sftpServerPath = app.sftp_server_path
   return opts
 }
 
@@ -48,6 +49,34 @@ function checkPatchComplete(patchId) {
   if (allDone) updatePatch(patchId, { status: 'deployed', deployed_at: new Date().toISOString() })
 }
 
+// ---- Path resolution ----
+
+function resolveDestSMB(file, app) {
+  let p = (file.deploy_target_path || '').trim().replace(/[*?]/g, '')
+  const isAbsolute = path.isAbsolute(p) || p.startsWith('\\\\') || p.startsWith('//')
+  if (!isAbsolute && app && app.app_root_path) {
+    p = path.join(app.app_root_path, p)
+  }
+  // Append filename if the path doesn't already end with it
+  if (!p.toLowerCase().endsWith(file.original_filename.toLowerCase())) {
+    p = path.join(p, file.original_filename)
+  }
+  return p
+}
+
+function resolveDestSFTP(file, app) {
+  let p = (file.deploy_target_path || '').trim().replace(/\\/g, '/').replace(/[*?]/g, '')
+  const isAbsolute = p.startsWith('/')
+  if (!isAbsolute && app && app.app_root_path) {
+    const root = app.app_root_path.replace(/\\/g, '/').replace(/\/$/, '')
+    p = `${root}/${p}`
+  }
+  if (!p.endsWith(file.original_filename)) {
+    p = `${p.replace(/\/$/, '')}/${file.original_filename}`
+  }
+  return p
+}
+
 // ---- SMB deployment ----
 
 function backupAndCopySMB(src, dest) {
@@ -61,15 +90,30 @@ function backupAndCopySMB(src, dest) {
   return bak
 }
 
-function deployFileSMB(file) {
-  backupAndCopySMB(file.local_path, file.deploy_target_path)
+function deployFileSMB(file, app) {
+  const dest = resolveDestSMB(file, app)
+  backupAndCopySMB(file.local_path, dest)
+  return dest
+}
+
+// GIAS RARs always have one top-level wrapper folder (e.g. GIAS_Reserved_Folders).
+// Strip it so files land relative to app root instead of app root / GIAS_Reserved_Folders / ...
+function giasDeployRoot(extractedDir) {
+  try {
+    const entries = fs.readdirSync(extractedDir, { withFileTypes: true })
+    if (entries.length === 1 && entries[0].isDirectory()) {
+      return path.join(extractedDir, entries[0].name)
+    }
+  } catch {}
+  return extractedDir
 }
 
 function deployGiasSMB(extractedDir, appRootPath) {
-  const srcFiles = walkDir(extractedDir)
+  const deployRoot = giasDeployRoot(extractedDir)
+  const srcFiles = walkDir(deployRoot)
   const deployed = []
   for (const src of srcFiles) {
-    const rel  = path.relative(extractedDir, src)
+    const rel  = path.relative(deployRoot, src)
     const dest = path.join(appRootPath, rel)
     backupAndCopySMB(src, dest)
     deployed.push({ rel, dest })
@@ -93,12 +137,12 @@ async function deploySFTP(filesToDeploy, app) {
   try {
     await sftp.connect(sftpOpts(app))
     for (const item of filesToDeploy) {
-      const dest = item.deploy_target_path
-      const remoteDir = dest.replace(/\\/g, '/').replace(/\/[^/]+$/, '')
+      const dest = resolveDestSFTP(item, app)
+      const remoteDir = dest.replace(/\/[^/]+$/, '')
       try { await sftp.mkdir(remoteDir, true) } catch {}
       try { await sftp.rename(dest, `${dest}.bak-${Date.now()}`) } catch {}
       await sftp.fastPut(item.local_path, dest)
-      results.push({ id: item.id, success: true })
+      results.push({ id: item.id, dest, success: true })
     }
     await sftp.end()
   } catch (e) {
@@ -113,9 +157,10 @@ async function deployGiasSFTP(extractedDir, appRootPath, app) {
   const sftp = new SftpClient()
   try {
     await sftp.connect(sftpOpts(app))
-    const srcFiles = walkDir(extractedDir)
+    const deployRoot = giasDeployRoot(extractedDir)
+    const srcFiles = walkDir(deployRoot)
     for (const src of srcFiles) {
-      const rel  = path.relative(extractedDir, src).replace(/\\/g, '/')
+      const rel  = path.relative(deployRoot, src).replace(/\\/g, '/')
       const dest = `${appRootPath.replace(/\\/g, '/')}/${rel}`
       const remoteDir = dest.replace(/\/[^/]+$/, '')
       try { await sftp.mkdir(remoteDir, true) } catch {}
@@ -158,6 +203,22 @@ async function restartTomcatSFTP(app) {
 function previewDeploy(patchId) {
   const { patch, app, files } = getContext(patchId)
 
+  // Block deploy if any older patch for the same app is not yet deployed
+  const db = getDb()
+  const blockedBy = db.prepare(`
+    SELECT id, email_subject, email_date, status FROM patches
+    WHERE app_id = ? AND id != ? AND status NOT IN ('deployed')
+      AND (email_date < ? OR (email_date = ? AND id < ?))
+    ORDER BY email_date ASC, id ASC
+  `).all(patch.app_id, patchId, patch.email_date, patch.email_date, patchId)
+
+  if (blockedBy.length > 0) {
+    return {
+      deployable: [], nonDeployable: [], app, patch,
+      tomcatAvailable: false, blockedBy
+    }
+  }
+
   const deployable    = []
   const nonDeployable = []
 
@@ -182,7 +243,8 @@ function previewDeploy(patchId) {
       if (!fs.existsSync(extractedDir)) {
         nonDeployable.push({ ...f, reason: 'Extracted directory not found. Was it extracted?' }); continue
       }
-      const subFiles = walkDir(extractedDir).map(p => path.relative(extractedDir, p))
+      const deployRoot = giasDeployRoot(extractedDir)
+      const subFiles = walkDir(deployRoot).map(p => path.relative(deployRoot, p))
       deployable.push({ ...f, action: 'gias', extractedDir, subFiles, deployBase: app.app_root_path }); continue
     }
     if (!f.deploy_target_path) {
@@ -250,8 +312,8 @@ async function executeDeploy({ patchId, fileIds, restartTomcat }) {
           deployGiasSMB(extractedDir, app.app_root_path)
           logDeployment({ patchId, patchFileId: f.id, appId: patch.app_id, action: 'deploy-gias', status: 'success', detail: `→ ${app.app_root_path}` })
         } else {
-          deployFileSMB(f)
-          logDeployment({ patchId, patchFileId: f.id, appId: patch.app_id, action: 'deploy', status: 'success', detail: f.deploy_target_path })
+          const dest = deployFileSMB(f, app)
+          logDeployment({ patchId, patchFileId: f.id, appId: patch.app_id, action: 'deploy', status: 'success', detail: dest })
         }
         updatePatchFile(f.id, { deploy_status: 'deployed' })
         results.push({ id: f.id, filename: f.original_filename, success: true })

@@ -84,6 +84,12 @@ function initializeDb() {
   // Migrations — safe to run on existing DBs
   try { db.exec(`ALTER TABLE patches ADD COLUMN email_entry_id TEXT`) } catch {}
   try { db.exec(`CREATE INDEX IF NOT EXISTS idx_patches_entry ON patches(app_id, email_entry_id)`) } catch {}
+  // WAR deploy fields
+  try { db.exec(`ALTER TABLE apps ADD COLUMN local_src_path TEXT`) } catch {}
+  try { db.exec(`ALTER TABLE apps ADD COLUMN war_name TEXT`) } catch {}
+  try { db.exec(`ALTER TABLE apps ADD COLUMN remote_war_path TEXT`) } catch {}
+  try { db.exec(`ALTER TABLE apps ADD COLUMN tomcat_remote_path TEXT`) } catch {}
+  try { db.exec(`ALTER TABLE apps ADD COLUMN sftp_server_path TEXT`) } catch {}
 
   const insertDefault = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)')
   insertDefault.run('patches_root_dir', 'D:\\Office\\Patches_automated')

@@ -96,6 +96,24 @@ export default function DeployDialog({ patchId, onClose, onDeployed }) {
             </div>
           )}
 
+          {step === 'preview' && data?.blockedBy?.length > 0 && (
+            <div className="deploy-blocked">
+              <div className="deploy-blocked-icon">🔒</div>
+              <div className="deploy-blocked-title">Deploy blocked — older patches must be deployed first</div>
+              <div className="deploy-blocked-list">
+                {data.blockedBy.map(p => (
+                  <div key={p.id} className="deploy-blocked-item">
+                    <span className={`status-badge status-${p.status}`}>{p.status}</span>
+                    <span className="deploy-blocked-subject">{p.email_subject || '(no subject)'}</span>
+                    <span className="deploy-blocked-date">
+                      {p.email_date ? new Date(p.email_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {step === 'error' && (
             <div className="merge-error">
               <div className="merge-error-icon">✕</div>
@@ -244,7 +262,11 @@ export default function DeployDialog({ patchId, onClose, onDeployed }) {
         </div>
 
         <div className="modal-footer">
-          {step === 'preview' && (
+          {step === 'preview' && data?.blockedBy?.length > 0 && (
+            <button className="btn btn-primary" onClick={handleClose}>Close</button>
+          )}
+
+          {step === 'preview' && !data?.blockedBy?.length && (
             <>
               <button className="btn btn-secondary" onClick={handleClose}>Cancel</button>
               {isRdp ? (

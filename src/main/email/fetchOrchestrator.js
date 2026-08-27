@@ -1,22 +1,21 @@
 const path = require('path')
 const fs   = require('fs')
-const { getDb }           = require('../db/schema')
-const { createPatch, createPatchFile, getAllSettings } = require('../db/queries')
-const { getEmails, saveAttachment } = require('./outlookBridge')
-const { classifyAttachment }        = require('./classifier')
-const { extractDeploymentPaths }    = require('./pathParser')
-const { createPatchFolder }         = require('../patches/organizer')
-const { extract }                   = require('../patches/extractor')
-const { logDeployment }             = require('../utils/logger')
+const { getDb }                        = require('../db/schema')
+const { createPatch, createPatchFile } = require('../db/queries')
+const { getEmails, saveAttachment }    = require('./outlookBridge')
+const { classifyAttachment }           = require('./classifier')
+const { extractDeploymentPaths }       = require('./pathParser')
+const { createPatchFolder }            = require('../patches/organizer')
+const { extract }                      = require('../patches/extractor')
+const { logDeployment }                = require('../utils/logger')
 
 function extractTicketRef(subject) {
   const m = (subject || '').match(/\b([A-Z]{1,5}-\d+)\b/)
   return m ? m[1] : null
 }
 
-// Returns true if a JSP/merge file genuinely needs a deploy path
 function needsPath(fileType) {
-  return fileType === 'jsp' || fileType === 'xml_merge' || fileType === 'props_merge'
+  return fileType === 'jsp' || fileType === 'js_file' || fileType === 'xml_merge' || fileType === 'props_merge'
 }
 
 async function fetchForApp(app, sinceDate) {
@@ -40,13 +39,20 @@ async function fetchForApp(app, sinceDate) {
       if (dup) continue
     }
 
-    // Skip emails with no actionable attachments
     const atts = email.attachments || []
     if (!atts.length) continue
 
-    const ticketRef  = extractTicketRef(email.subject)
-    const localFolder = createPatchFolder()
-    const patchId = createPatch({
+    // Pre-classify to skip emails that only have images / no actionable files
+    const classified = atts
+      .filter(a => a.filename)
+      .map(a => ({ ...a, fileType: classifyAttachment(a.filename) }))
+      .filter(a => a.fileType !== 'image')  // ignore images entirely
+
+    if (!classified.length) continue
+
+    const ticketRef   = extractTicketRef(email.subject)
+    const localFolder = createPatchFolder(email.receivedTime)
+    const patchId     = createPatch({
       app_id:         app.id,
       email_entry_id: email.entryId || null,
       email_subject:  email.subject,
@@ -59,10 +65,10 @@ async function fetchForApp(app, sinceDate) {
       deployment_mode: app.deployment_mode
     })
 
-    for (const att of atts) {
-      if (!att.filename) continue
+    const scriptFiles = []  // collect db_script attachments for compilation
 
-      const fileType = classifyAttachment(att.filename)
+    for (const att of classified) {
+      const { fileType } = att
       const savePath = path.join(localFolder, att.filename)
 
       // Save attachment from Outlook
@@ -76,7 +82,13 @@ async function fetchForApp(app, sinceDate) {
         continue
       }
 
-      // Extract GIAS archives into extracted\ subfolder
+      // Compile db_script files later — don't create individual records
+      if (fileType === 'db_script') {
+        scriptFiles.push({ filename: att.filename, savePath })
+        continue
+      }
+
+      // Extract GIAS archives
       if (fileType === 'gias_patch') {
         const extractDir = path.join(localFolder, 'extracted')
         try {
@@ -91,49 +103,62 @@ async function fetchForApp(app, sinceDate) {
             status: 'failed', detail: `${att.filename}: ${e.message}`
           })
         }
+        createPatchFile({
+          patch_id: patchId, original_filename: att.filename, local_path: savePath,
+          file_type: fileType, deploy_status: 'pending', merge_status: null,
+          deploy_target_path: null
+        })
+        continue
       }
 
       // Parse deployment path from email body
-      const paths = extractDeploymentPaths(email.body || '')
-      let deployPath = null
-      let confidence = null
-      if (paths.length > 0) {
-        deployPath = paths[0].path
-        confidence = paths[0].confidence
+      const detectedPaths = extractDeploymentPaths(email.body || '')
+      let deployPath  = null
+      let confidence  = null
+      if (detectedPaths.length > 0) {
+        deployPath = detectedPaths[0].path
+        confidence = detectedPaths[0].confidence
       }
 
-      const deployStatus = (fileType === 'db_script' || fileType === 'reference')
-        ? 'skipped' : 'pending'
-      const mergeStatus = (fileType === 'xml_merge' || fileType === 'props_merge')
-        ? 'pending' : null
+      const deployStatus = fileType === 'reference' ? 'skipped' : 'pending'
+      const mergeStatus  = (fileType === 'xml_merge' || fileType === 'props_merge') ? 'pending' : null
 
       const patchFileId = createPatchFile({
-        patch_id:          patchId,
-        original_filename: att.filename,
-        local_path:        savePath,
-        file_type:         fileType,
+        patch_id:           patchId,
+        original_filename:  att.filename,
+        local_path:         savePath,
+        file_type:          fileType,
         deploy_target_path: deployPath,
-        merge_status:      mergeStatus,
-        deploy_status:     deployStatus
+        merge_status:       mergeStatus,
+        deploy_status:      deployStatus
       })
 
-      // Collect files where path is missing or only low-confidence
       if (needsPath(fileType) && (!deployPath || confidence === 'low')) {
         missingPaths.push({
-          patchFileId,
-          patchId,
-          appId:        app.id,
-          appName:      app.name,
-          filename:     att.filename,
-          fileType,
-          ticketRef,
+          patchFileId, patchId, appId: app.id, appName: app.name,
+          filename: att.filename, fileType, ticketRef,
           emailSubject: email.subject,
-          // truncate body so IPC payload stays small
           emailBody:    (email.body || '').slice(0, 800).trim(),
-          detectedPath: deployPath,
-          confidence
+          detectedPath: deployPath, confidence
         })
       }
+    }
+
+    // Compile all script files into a single compiled_scripts.txt
+    if (scriptFiles.length > 0) {
+      const compiledPath = path.join(localFolder, 'compiled_scripts.txt')
+      const lines = []
+      for (const sc of scriptFiles) {
+        lines.push(`-- ====== ${sc.filename} ======`)
+        try { lines.push(fs.readFileSync(sc.savePath, 'utf8')) } catch { lines.push('(could not read file)') }
+        lines.push('')
+      }
+      fs.writeFileSync(compiledPath, lines.join('\n'), 'utf8')
+      createPatchFile({
+        patch_id: patchId, original_filename: 'compiled_scripts.txt',
+        local_path: compiledPath, file_type: 'db_script',
+        deploy_status: 'skipped', merge_status: null, deploy_target_path: null
+      })
     }
 
     fetched++

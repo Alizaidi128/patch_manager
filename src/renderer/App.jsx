@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Sidebar from './components/Sidebar'
 import Settings from './components/Settings'
 import AppConfig from './components/AppConfig'
@@ -23,6 +23,14 @@ export default function App() {
   const [view, setView]               = useState('dashboard')
   const [apps, setApps]               = useState([])
   const [appsLoaded, setAppsLoaded]   = useState(false)
+
+  // Theme
+  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark')
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    localStorage.setItem('theme', theme)
+  }, [theme])
+  const toggleTheme = useCallback(() => setTheme(t => t === 'dark' ? 'light' : 'dark'), [])
   const [selectedAppId, setSelectedAppId] = useState(null)
   const [editAppId, setEditAppId]     = useState(null)
 
@@ -163,6 +171,8 @@ export default function App() {
         apps={apps}
         selectedAppId={selectedAppId}
         activeView={view}
+        theme={theme}
+        onToggleTheme={toggleTheme}
         onSelectApp={handleSelectApp}
         onEditApp={handleEditApp}
         onAddApp={handleAddApp}

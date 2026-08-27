@@ -127,10 +127,17 @@ function getLogEntries(filters = {}) {
   return getDb().prepare(sql).all(...params)
 }
 
+function deletePatch(id) {
+  const db = getDb()
+  db.prepare('DELETE FROM deployment_log WHERE patch_id = ?').run(id)
+  db.prepare('DELETE FROM patch_files WHERE patch_id = ?').run(id)
+  db.prepare('DELETE FROM patches WHERE id = ?').run(id)
+}
+
 module.exports = {
   getAllSettings, saveSetting, saveSettings,
   getAllApps, getApp, saveApp, deleteApp,
   getPatchesForApp, getPatchById, createPatch, updatePatch, getPendingPatchCount,
   getPatchFiles, createPatchFile, updatePatchFile,
-  addLogEntry, getLogEntries
+  addLogEntry, getLogEntries, deletePatch
 }

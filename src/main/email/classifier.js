@@ -1,19 +1,39 @@
-// Phase 3 — Attachment type classifier
 const path = require('path')
+
+const IMAGE_EXTS  = new Set(['.jpg','.jpeg','.png','.gif','.bmp','.ico','.svg','.webp','.tiff','.tif'])
+const SCRIPT_EXTS = new Set(['.sql','.ddl','.dml','.sh','.bat','.ps1'])
 
 function classifyAttachment(filename) {
   const lower = filename.toLowerCase()
   const ext   = path.extname(lower)
 
+  // GIAS reserved-folder archive — must check first
   if (lower.includes('gias_reserved_folders') && (ext === '.zip' || ext === '.rar')) return 'gias_patch'
+
+  // Images — ignored entirely (caller skips these)
+  if (IMAGE_EXTS.has(ext)) return 'image'
+
+  // Deployable source files
   if (ext === '.jsp') return 'jsp'
-  if (lower.includes('webxml') || lower.includes('web.xml') || lower.includes('web_xml') ||
-      ext === '.xml' || (ext === '.txt' && lower.includes('xml'))) return 'xml_merge'
+  if (ext === '.js')  return 'js_file'
+
+  // XML merge
+  if (ext === '.xml' || lower.includes('webxml') || lower.includes('web.xml') || lower.includes('web_xml') ||
+      (ext === '.txt' && lower.includes('xml'))) return 'xml_merge'
+
+  // Properties merge
   if (ext === '.properties' || lower.includes('log4j') || lower.includes('log4property') ||
       (ext === '.txt' && (lower.includes('propert') || lower.includes('log4')))) return 'props_merge'
-  if (ext === '.sql' || lower.includes('script_') || lower.includes('_script')) return 'db_script'
+
+  // DB / shell scripts
+  if (SCRIPT_EXTS.has(ext)) return 'db_script'
+  if (ext === '.txt') return 'db_script'                 // plain text → treat as script
+  if (lower.includes('script') || lower.includes('_ddl') || lower.includes('_dml')) return 'db_script'
+
+  // Reference / docs
   if (['.doc','.docx','.xls','.xlsx','.pdf','.ppt','.pptx'].includes(ext) ||
       lower.includes('releasenote') || lower.includes('knockoff')) return 'reference'
+
   return 'unknown'
 }
 

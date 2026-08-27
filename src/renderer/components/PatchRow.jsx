@@ -3,6 +3,7 @@ import { useState } from 'react'
 const FILE_TYPE_LABEL = {
   gias_patch:  'GIAS',
   jsp:         'JSP',
+  js_file:     'JS',
   xml_merge:   'XML',
   props_merge: 'Props',
   db_script:   'SQL',
@@ -58,7 +59,7 @@ function FileRow({ file, onMerge }) {
   )
 }
 
-export default function PatchRow({ patch, onOpenFolder, onMerge, onDeploy }) {
+export default function PatchRow({ patch, onOpenFolder, onMerge, onDeploy, onDelete, selected, onToggleSelect }) {
   const [expanded, setExpanded] = useState(false)
   const files = patch.files || []
 
@@ -82,9 +83,23 @@ export default function PatchRow({ patch, onOpenFolder, onMerge, onDeploy }) {
     ? new Date(patch.email_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
     : ''
 
+  function handleDelete(e) {
+    e.stopPropagation()
+    onDelete(patch.id)
+  }
+
   return (
-    <div className={`patch-row${expanded ? ' expanded' : ''}`}>
+    <div className={`patch-row${expanded ? ' expanded' : ''}${selected ? ' patch-row-selected' : ''}`}>
       <div className="patch-row-header" onClick={() => setExpanded(e => !e)}>
+        {onToggleSelect && (
+          <input
+            type="checkbox"
+            className="patch-select-cb"
+            checked={!!selected}
+            onClick={e => e.stopPropagation()}
+            onChange={() => onToggleSelect(patch.id)}
+          />
+        )}
         <span className="patch-row-chevron">{expanded ? '▾' : '▸'}</span>
 
         <div className="patch-row-main">
@@ -98,6 +113,13 @@ export default function PatchRow({ patch, onOpenFolder, onMerge, onDeploy }) {
           <span className="patch-file-count">{files.length} file{files.length !== 1 ? 's' : ''}</span>
           <span className="patch-date">{dateStr}</span>
           <span className={`status-badge status-${patch.status}`}>{patch.status}</span>
+          {patch.status === 'staged' && (
+            <button
+              className="btn btn-ghost btn-sm patch-delete-btn"
+              title="Delete patch"
+              onClick={handleDelete}
+            >✕</button>
+          )}
         </div>
       </div>
 

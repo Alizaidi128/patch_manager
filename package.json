@@ -4,7 +4,8 @@
   "description": "Automated patch management for Outlook-received software patches",
   "main": "electron.js",
   "scripts": {
-    "dev": "concurrently -k -n VITE,ELECTRON -c cyan,yellow \"vite\" \"wait-on tcp:5173 && cross-env VITE_DEV=1 electron .\"",
+    "electron:dev": "node node_modules/electron/cli.js . --dev",
+    "dev": "concurrently -k -n VITE,ELECTRON -c cyan,yellow \"vite\" \"wait-on tcp:5173 && npm run electron:dev\"",
     "start": "electron .",
     "build": "vite build",
     "dist": "vite build && electron-builder",
@@ -22,7 +23,6 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.1",
     "concurrently": "^8.2.2",
-    "cross-env": "^10.1.0",
     "electron": "^29.1.4",
     "electron-builder": "^24.13.3",
     "electron-rebuild": "^3.2.9",

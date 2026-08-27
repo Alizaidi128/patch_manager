@@ -1,5 +1,50 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import FolderPickerModal from './FolderPickerModal'
+
+function CopyBtn({ value }) {
+  const [copied, setCopied] = useState(false)
+  const copy = useCallback(() => {
+    if (!value) return
+    navigator.clipboard.writeText(value).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }, [value])
+  return (
+    <button className="copy-btn" onClick={copy} title="Copy to clipboard" type="button">
+      {copied ? '✓' : '⧉'}
+    </button>
+  )
+}
+
+function CredField({ label, value, onChange, type = 'text', placeholder = '', hint, readOnly = false, mono = false, canCopy = false }) {
+  const [showPwd, setShowPwd] = useState(false)
+  const isPassword = type === 'password'
+  return (
+    <div className="cred-field">
+      <div className="cred-field-label">{label}</div>
+      <div className="cred-field-row">
+        <input
+          type={isPassword && !showPwd ? 'password' : 'text'}
+          className={`form-control cred-input${mono ? ' mono' : ''}`}
+          value={value || ''}
+          onChange={onChange ? e => onChange(e.target.value) : undefined}
+          readOnly={readOnly}
+          placeholder={placeholder}
+          autoComplete="new-password"
+          style={{ fontSize: 12 }}
+        />
+        {isPassword && (
+          <button className="copy-btn" onClick={() => setShowPwd(p => !p)} title={showPwd ? 'Hide' : 'Show'} type="button">
+            {showPwd ? '🙈' : '👁️'}
+          </button>
+        )}
+        {canCopy && <CopyBtn value={value} />}
+      </div>
+      {hint && <p className="form-hint">{hint}</p>}
+    </div>
+  )
+}
 
 const DEPLOY_MODES = [
   { value: 'smb',          label: 'SMB / Local' },
@@ -15,6 +60,8 @@ function makeDefault() {
     server_host: '', server_port: 22,
     server_user: '', server_password: '', server_key_path: '',
     app_root_path: '', tomcat_service_name: '', smb_path: '',
+    local_src_path: '', war_name: '', remote_war_path: '', tomcat_remote_path: '',
+    sftp_server_path: '',
     notes: ''
   }
 }
@@ -22,7 +69,6 @@ function makeDefault() {
 export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
   const [form, setForm]               = useState(app ? { ...app } : makeDefault())
   const [showPicker, setShowPicker]   = useState(false)
-  const [showPass, setShowPass]       = useState(false)
   const [testing, setTesting]         = useState(false)
   const [testResult, setTestResult]   = useState(null)
   const [saving, setSaving]           = useState(false)
@@ -232,36 +278,32 @@ export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
               </div>
             </div>
 
-            <div className="form-grid-2" style={{ marginBottom: 14 }}>
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <label>Username</label>
-                <input
-                  type="text" className="form-control"
+            <div className="cred-card">
+              <div className="cred-card-title">SERVER — LINUX / SFTP (WINSCP)</div>
+              <div className="form-grid-2" style={{ marginBottom: 0 }}>
+                <CredField label="USERNAME"
                   value={form.server_user}
-                  onChange={e => set('server_user', e.target.value)}
+                  onChange={v => set('server_user', v)}
                   placeholder="deploy"
-                  autoComplete="off"
+                  canCopy
+                />
+                <CredField label="PASSWORD"
+                  value={form.server_password}
+                  onChange={v => set('server_password', v)}
+                  type="password"
+                  placeholder={form.server_key_path ? '(key auth)' : ''}
+                  canCopy
                 />
               </div>
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <label>Password</label>
-                <div className="form-row">
-                  <input
-                    type={showPass ? 'text' : 'password'}
-                    className="form-control"
-                    value={form.server_password}
-                    onChange={e => set('server_password', e.target.value)}
-                    autoComplete="new-password"
-                    placeholder={form.server_key_path ? '(key auth)' : ''}
-                  />
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => setShowPass(p => !p)}
-                    title={showPass ? 'Hide' : 'Show'}
-                    tabIndex={-1}
-                  >{showPass ? '🙈' : '👁️'}</button>
-                </div>
-              </div>
+              <CredField
+                label={<>SFTP SERVER <span className="label-note">(optional)</span></>}
+                value={form.sftp_server_path}
+                onChange={v => set('sftp_server_path', v)}
+                placeholder="sudo /usr/libexec/openssh/sftp-server"
+                mono
+                canCopy
+                hint="Leave blank for standard SFTP. Set only if the server requires a custom sftp-server binary path (shown in WinSCP advanced settings)."
+              />
             </div>
 
             <div className="form-group">
@@ -302,6 +344,70 @@ export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
               )}
             </div>
           </>
+        )}
+
+        {/* WAR Deploy fields — SFTP only */}
+        {form.deployment_mode === 'sftp' && (
+          <div className="settings-subsection">
+            <h4>WAR Deployment</h4>
+            <p className="form-hint" style={{ marginBottom: 12 }}>
+              Used for the "Deploy WAR" button — zips your local source folder and uploads it as a WAR file.
+            </p>
+
+            <div className="form-group">
+              <label>Local Source Folder</label>
+              <div className="form-row">
+                <input
+                  type="text" className="form-control mono" style={{ fontSize: 12 }}
+                  value={form.local_src_path || ''}
+                  onChange={e => set('local_src_path', e.target.value)}
+                  placeholder="D:\Office\APPS\CONVUAT"
+                />
+                <button className="btn btn-secondary btn-sm" onClick={async () => {
+                  const p = await window.api.invoke('dialog:browse-folder')
+                  if (p) set('local_src_path', p)
+                }}>Browse</button>
+              </div>
+              <p className="form-hint">Local Windows folder whose contents are zipped into the WAR.</p>
+            </div>
+
+            <div className="form-grid-2" style={{ marginBottom: 14 }}>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label>WAR Name</label>
+                <input
+                  type="text" className="form-control mono"
+                  value={form.war_name || ''}
+                  onChange={e => set('war_name', e.target.value)}
+                  placeholder="CONVUAT"
+                />
+                <p className="form-hint">Filename without .war extension.</p>
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label>Remote WAR Directory</label>
+                <input
+                  type="text" className="form-control mono" style={{ fontSize: 12 }}
+                  value={form.remote_war_path || ''}
+                  onChange={e => set('remote_war_path', e.target.value)}
+                  placeholder="/u01/opt/APP"
+                />
+                <p className="form-hint">Remote folder that contains the WAR file.</p>
+              </div>
+            </div>
+
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label>Tomcat Remote Path <span className="label-note">(optional — for startup/shutdown scripts)</span></label>
+              <input
+                type="text" className="form-control mono" style={{ fontSize: 12 }}
+                value={form.tomcat_remote_path || ''}
+                onChange={e => set('tomcat_remote_path', e.target.value)}
+                placeholder="/opt/tomcat  (uses bin/shutdown.sh + bin/startup.sh)"
+              />
+              <p className="form-hint">
+                If set, "Restart Tomcat" runs <code>bin/shutdown.sh</code> then <code>bin/startup.sh</code>.
+                If blank but Tomcat Service Name is set, uses <code>systemctl restart</code>.
+              </p>
+            </div>
+          </div>
         )}
 
         {/* RDP-Assisted fields */}

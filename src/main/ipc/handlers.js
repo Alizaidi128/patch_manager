@@ -1,8 +1,10 @@
 const { ipcMain, dialog, shell, app } = require('electron')
+const log = require('../utils/logger')
 const {
   getAllSettings, saveSettings,
   getAllApps, saveApp, deleteApp,
-  getPatchesForApp, updatePatch, updatePatchFile, getLogEntries
+  getPatchesForApp, getPatchById, getPatchFiles,
+  updatePatch, updatePatchFile, getLogEntries, deletePatch
 } = require('../db/queries')
 
 function registerHandlers() {
@@ -120,9 +122,17 @@ function registerHandlers() {
 
   // ---- Phase 3: Email fetch ----
   ipcMain.handle('outlook:fetch', async (_, { appIds, sinceDate }) => {
-    const { fetchAll } = require('../email/fetchOrchestrator')
-    const apps = getAllApps()
-    return fetchAll(appIds, sinceDate, apps)
+    log.info('outlook:fetch called', { appIds, sinceDate })
+    try {
+      const { fetchAll } = require('../email/fetchOrchestrator')
+      const apps = getAllApps()
+      const result = await fetchAll(appIds, sinceDate, apps)
+      log.info('outlook:fetch done', result)
+      return result
+    } catch (e) {
+      log.error('outlook:fetch failed', e)
+      throw e
+    }
   })
 
   // ---- Patch actions ----
@@ -147,6 +157,29 @@ function registerHandlers() {
     return applyMerge(patchFileId, mergedContent)
   })
 
+  // ---- Patch delete ----
+  ipcMain.handle('patch:delete', async (_, { patchId }) => {
+    const patch = getPatchById(patchId)
+    if (!patch) return { success: false, error: 'Patch not found' }
+    if (patch.status !== 'staged') {
+      return { success: false, error: `Only staged patches can be deleted (current status: ${patch.status})` }
+    }
+    if (patch.local_folder) {
+      const fs   = require('fs')
+      const path = require('path')
+      try { fs.rmSync(patch.local_folder, { recursive: true, force: true }) } catch {}
+      // Delete parent date folder if it is now empty
+      try {
+        const parent = path.dirname(patch.local_folder)
+        if (fs.existsSync(parent) && fs.readdirSync(parent).length === 0) {
+          fs.rmdirSync(parent)
+        }
+      } catch {}
+    }
+    deletePatch(patchId)
+    return { success: true }
+  })
+
   // ---- Phase 5: Deployment engine ----
   ipcMain.handle('deploy:preview', async (_, { patchId }) => {
     const { previewDeploy } = require('../deploy/deployEngine')
@@ -161,6 +194,90 @@ function registerHandlers() {
   ipcMain.handle('deploy:mark-manual', async (_, { patchId, fileIds }) => {
     const { markManual } = require('../deploy/deployEngine')
     return markManual({ patchId, fileIds })
+  })
+
+  // ---- WAR deploy ----
+  ipcMain.handle('war:deploy', async (event, { appId }) => {
+    const { buildWar, deployWarSFTP } = require('../deploy/warEngine')
+    const app = getAllApps().find(a => a.id === appId)
+    if (!app) return { success: false, error: 'App not found' }
+    if (!app.local_src_path) return { success: false, error: 'local_src_path not configured' }
+    if (!app.war_name)       return { success: false, error: 'war_name not configured' }
+    if (!app.remote_war_path) return { success: false, error: 'remote_war_path not configured' }
+
+    const steps = []
+    try {
+      steps.push('Building WAR from local source…')
+      event.sender.send('war:progress', { step: steps[steps.length - 1] })
+      const localWar = buildWar(app.local_src_path, app.war_name)
+      steps.push(`WAR built: ${localWar}`)
+      event.sender.send('war:progress', { step: steps[steps.length - 1] })
+
+      await deployWarSFTP(app, localWar, msg => {
+        steps.push(msg)
+        event.sender.send('war:progress', { step: msg })
+      })
+
+      try { require('fs').unlinkSync(localWar) } catch {}
+      log.info('war:deploy success', { appId, steps })
+      return { success: true, steps }
+    } catch (e) {
+      log.error('war:deploy failed', e)
+      return { success: false, error: e.message, steps }
+    }
+  })
+
+  // ---- Tomcat restart ----
+  ipcMain.handle('tomcat:restart', async (_, { appId }) => {
+    const { restartTomcatSSH } = require('../deploy/warEngine')
+    const app = getAllApps().find(a => a.id === appId)
+    if (!app) return { success: false, error: 'App not found' }
+    try {
+      const out = await restartTomcatSSH(app)
+      log.info('tomcat:restart success', { appId, out })
+      return { success: true, output: out }
+    } catch (e) {
+      log.error('tomcat:restart failed', e)
+      return { success: false, error: e.message }
+    }
+  })
+
+  // ---- Dev/test: revert deployed patches back to staged ----
+  ipcMain.handle('debug:revert-patches', async (_, { appId }) => {
+    const db = require('../db/schema').getDb()
+    const patches = db.prepare(
+      `SELECT id FROM patches WHERE app_id = ? AND status = 'deployed'`
+    ).all(appId)
+    for (const p of patches) {
+      db.prepare(`UPDATE patches SET status = 'staged', deployed_at = NULL WHERE id = ?`).run(p.id)
+      db.prepare(`UPDATE patch_files SET deploy_status = 'pending' WHERE patch_id = ? AND deploy_status = 'deployed'`).run(p.id)
+    }
+    return { reverted: patches.length }
+  })
+
+  // Sequential deploy for multiple patches (oldest email first)
+  ipcMain.handle('deploy:batch', async (_, { patchIds }) => {
+    const { previewDeploy, executeDeploy } = require('../deploy/deployEngine')
+    const results = []
+    for (const patchId of patchIds) {
+      try {
+        const preview = previewDeploy(patchId)
+        if (preview.blockedBy && preview.blockedBy.length > 0) {
+          results.push({ patchId, error: `${preview.blockedBy.length} older patch(es) must be deployed first` })
+          continue
+        }
+        const fileIds = preview.deployable.map(f => f.id)
+        if (!fileIds.length) {
+          results.push({ patchId, skipped: true, reason: 'Nothing deployable' })
+          continue
+        }
+        const r = await executeDeploy({ patchId, fileIds, restartTomcat: false })
+        results.push({ patchId, ...r })
+      } catch (e) {
+        results.push({ patchId, error: e.message })
+      }
+    }
+    return results
   })
 }
 

@@ -1,0 +1,559 @@
+<%--
+  Created by IntelliJ IDEA.
+  User: Fasehuddin.Qammer
+  Date: 6/3/2026
+  Time: 4:22 PM
+  To change this template use File | Settings | File Templates.
+--%>
+<%@ include file="../genins/PageController.jsp" %>
+<%@ taglib uri="/WEB-INF/tlds/taglibrary.tld" prefix="dataCombo"%>
+<%@ page language="java" import="dbacclib.ManData,java.util.Vector, shgn.SHGNGetGlobalPara"%>
+<%@ page import="java.util.HashMap" %>
+<%@ page import="centlib.data.CentRecordSet" %>
+<%@ page import="java.util.Map" %>
+<%@ page import="java.net.http.HttpRequest" %>
+<%@ page import="geninslib.parameters.beans.PaymentTypeBean" %>
+<%@ page import="centlib.data.ParameterCollection" %>
+<%@ page import="shma.enterprise.data.Types" %>
+<html>
+<head>
+    <LINK href="../shmalib/stylesheets/Style.css" rel=stylesheet>
+    <script language="JavaScript" src="../shmalib/jscript/JSource.js"></script>
+    <script language="JavaScript" src="../shmalib/jscript/JTabular.js"></script>
+    <%!
+
+        private String getDataArray(ManData md, HttpServletRequest request,String payNature)
+        {
+            ServletContext application = request.getSession().getServletContext();
+            StringBuffer sb_Query=new StringBuffer("select PSR_SRNO , PSR_SRV_CODE , PTX_CODE , PSR_STD_RATE , PSR_RED_RATE , PSR_ADJ_RATE  , PPY_CODE ")
+                    .append(" FROM PR_GL_SR_SERVICESREGION WHERE PSR_SRV_CODE='")
+                    .append(request.getSession().getAttribute("PSR_SRV_CODE")).append("' ")
+                    .append(" AND PSR_SRNO = '").append(request.getSession().getAttribute("PSR_SRNO")).append("' ");
+                    if(payNature == null || payNature.length() == 0){
+                        sb_Query.append(" AND 1 = 2 ");
+                    }else{
+                        sb_Query.append(" and PPY_CODE='").append(payNature).append("' ");
+                    }
+
+            ResultSet rs = null;
+            StringBuffer sb = new StringBuffer("prodArry = new Array(");
+            try
+            {
+                rs = md.executeQuery(sb_Query.toString());
+                int counter = 0;
+                while(rs.next())
+                {
+                    if(counter>0)
+                        sb.append(",");
+
+                    sb.append("'")  //PSR_SRNO , PSR_SRV_CODE , PTX_CODE , PSR_STD_RATE , PSR_RED_RATE , PSR_ADJ_RATE
+                            .append(rs.getString("PSR_SRNO"))
+                            .append("~")
+                            .append(rs.getString("PSR_SRV_CODE")==null?"":rs.getString("PSR_SRV_CODE"))
+                            .append("~")
+                            .append(rs.getString("PTX_CODE")==null?"":rs.getString("PTX_CODE"))
+                            .append("~")
+                            .append(rs.getString("PSR_STD_RATE")==null?"":rs.getString("PSR_STD_RATE"))
+                            .append("~")
+                            .append(rs.getString("PSR_RED_RATE")==null?"":rs.getString("PSR_RED_RATE"))
+                            .append("~")
+                            .append(rs.getString("PSR_ADJ_RATE")==null?"":rs.getString("PSR_ADJ_RATE"))
+                            .append("~")
+                            .append(rs.getString("PPY_CODE")==null?"":rs.getString("PPY_CODE"))
+                            .append("'");
+                    counter++;
+                }
+                sb.append(");");
+            }
+            catch(Exception e)
+            {
+                e.printStackTrace();
+            }
+            finally
+            {
+                md.closeResultSet(rs);
+            }
+            return sb.toString();
+        }
+
+        private Vector getRiskRegions(ManData md,HttpServletRequest request,String payNature)
+        {
+
+            HttpSession session = request.getSession();
+            ServletContext application = session.getServletContext();
+
+            StringBuffer sb_Query = new StringBuffer("select PTX_CODE , PTX_DESC from PR_GL_TR_TAXREGIONS WHERE ")
+                .append(" PTX_TYPE = 'D' ");
+
+                if(payNature == null || payNature.length() == 0){
+                    sb_Query.append(" AND 1 = 2 ");
+                }
+
+                sb_Query.append(" ORDER BY PTX_DESC ");
+
+            ResultSet rs = null;
+            Vector v_RiskRegion=new Vector();
+            try
+            {
+                rs = md.executeQuery(sb_Query.toString());
+                while(rs.next())
+                {
+                    v_RiskRegion.add(rs.getString(1)+"~"+rs.getString(2));
+
+                }
+            }
+            catch(Exception e)
+            {
+                e.printStackTrace();
+            }
+            finally
+            {
+                md.closeResultSet(rs);
+            }
+            return v_RiskRegion;
+        }
+
+        private String getTitles(String rowId,HttpServletRequest request) throws Exception
+        {
+            StringBuffer sb_code = new StringBuffer("<Table class=\"tg_datatable\"><tr>")
+
+                    .append("<td class=\"tg_tableHeader\">")
+                    .append(geninslib.rb.LabelResourceHandler.getGeninsValue(request,"pgg_se_srvc_regionwisesetup_desc"))
+                    .append("</td>")
+
+                    .append("<td class=\"tg_tableHeader\">")
+                    .append(geninslib.rb.LabelResourceHandler.getGeninsValue(request,"pgg_se_srvc_regionwisesetup_std_rate"))
+                    .append("</td>")
+
+                    .append("<td class=\"tg_tableHeader\">")
+                    .append(geninslib.rb.LabelResourceHandler.getGeninsValue(request,"pgg_se_srvc_regionwisesetup_red_rate"))
+                    .append("</td>")
+
+                    .append("<td class=\"tg_tableHeader\">")
+                    .append(geninslib.rb.LabelResourceHandler.getGeninsValue(request,"pgg_se_srvc_regionwisesetup_adj_rate"))
+                    .append("</td>")
+
+/*
+                    .append("<td class=\"tg_tableHeader\">")
+                    .append(geninslib.rb.LabelResourceHandler.getGeninsValue(request,"pgg_se_srvc_regionwisesetup_srv_supp"))
+                    .append("</td>")
+*/
+
+                    .append("<td class=\"tg_tableHeader\"><input type=checkbox name=all id='all")
+                    .append(rowId)
+                    .append("' onclick=checkAll(this)></td>")
+
+                    .append("</tr>");
+
+            return sb_code.toString();
+        }
+
+        private String getLocHTML(HttpServletRequest request,ManData md,String payNature) throws Exception
+        {
+            Vector v = getRiskRegions(md, request,payNature);
+
+            /*
+            HashMap<String,String> hmap =  new HashMap<String,String>();
+            hmap = getServicesSupplies();
+            */
+
+            StringBuffer sb_code = new StringBuffer();
+            int id = 0;
+
+            if(v.size() == 0){
+                StringBuffer sb_rowid = new StringBuffer("00000");
+                sb_rowid.append(""+0);
+                String rowId = sb_rowid.substring(sb_rowid.length()-6);
+
+                sb_code.append(getTitles(rowId,request));
+            }
+
+            for(int i=0;i<v.size();i++)
+            {
+                StringBuffer sb_rowid = new StringBuffer("00000");
+                sb_rowid.append(""+i);
+                String rowId = sb_rowid.substring(sb_rowid.length()-6);
+
+                if(i==0)
+                {
+                    sb_code.append(getTitles(rowId,request));
+                }
+                String val = (String)v.get(i);
+                String allowable =  val.split("~")[0];
+                String allowableDesc = val.split("~")[1];
+
+                if(i%2 == 0)
+                    sb_code.append("<tr class=\"tg_evenRow\"");
+                else
+                    sb_code.append("<tr class=\"tg_oddRow\"");
+
+                sb_code.append(" name='trrow' id='trrow")
+                        .append(rowId)
+                        .append("' >")
+
+                        .append("<input type=hidden name='POR_ORGACODE_pk_' id='POR_ORGACODE_pk_")
+                        .append(rowId)
+                        .append("' value='")
+                        .append(request.getSession().getAttribute("s_POR_ORGACODE"))
+                        .append("' >")
+
+                        .append("<input type=hidden name='PSR_SRNO_pk_' id='PSR_SRNO_pk_")
+                        .append(rowId)
+                        .append("' value='")
+                        .append(request.getSession().getAttribute("PSR_SRNO"))
+                        .append("' >")
+
+                        .append("<input type=hidden name='PSR_SRV_CODE_pk_' id='PSR_SRV_CODE_pk_")
+                        .append(rowId)
+                        .append("' value='")
+                        .append(request.getSession().getAttribute("PSR_SRV_CODE"))
+                        .append("' >")
+
+                        .append("<input type=hidden name='PPY_CODE_pk_' id='PPY_CODE_pk_")
+                        .append(rowId)
+                        .append("' value='")
+                        .append(request.getSession().getAttribute("PPY_CODE"))
+                        .append("' >")
+
+                        .append("<input type=hidden name='PTX_CODE_pk_' id='PTX_CODE_pk_")
+                        .append(rowId)
+                        .append("' value='")
+                        .append(allowable)
+                        .append("' >")
+
+                        .append("<td class=columnstyle><input readonly type=text name='PTX_DESC' id='PTX_DESC")
+                        .append(rowId)
+                        .append("' class=columnstyle value='")
+                        .append(allowableDesc)
+                        .append("' MaxLength=75  Size=75 ></td>")
+
+                        .append("<td class=columnstyle> <input onblur=validate(this,'n',false) ")
+                        .append((i % 2 == 0 ? "class=\"tg_evenRow inputtext\"" : "class=\"tg_oddRow inputtext\""))
+                        .append(" type=text name='PSR_STD_RATE' maxlength=5 size=5 style='text-align:right' id='PSR_STD_RATE")
+                        .append(rowId)
+                        .append("' value='")
+                        .append("' ></td>")
+
+                        .append("<td class=columnstyle> <input onblur=validate(this,'n',false) ")
+                        .append((i % 2 == 0 ? "class=\"tg_evenRow inputtext\"" : "class=\"tg_oddRow inputtext\""))
+                        .append(" type=text name='PSR_RED_RATE' maxlength=5 size=5 style='text-align:right' id='PSR_RED_RATE")
+                        .append(rowId)
+                        .append("' value='")
+                        .append("' ></td>")
+
+                        .append("<td class=columnstyle> <input onblur=validate(this,'n',false) ")
+                        .append((i % 2 == 0 ? "class=\"tg_evenRow inputtext\"" : "class=\"tg_oddRow inputtext\""))
+                        .append(" type=text name='PSR_ADJ_RATE' maxlength=5 size=5 style='text-align:right' id='PSR_ADJ_RATE")
+                        .append(rowId)
+                        .append("' value='")
+                        .append("' ></td>")
+
+/*
+                        .append("<td class=columnstyle> ")
+                        .append("<select name='PPY_CODE' id='PPY_CODE")
+                        .append(rowId)
+                        .append("' class='combo' > ");
+
+                        for (String key : hmap.keySet()) {
+                            sb_code.append(" <option value='").append(key).append("'>").append(hmap.get(key)).append("</option>");
+                        }
+
+                sb_code.append("</select>")
+                        .append(" </td>")
+
+*/
+                        .append("<td width=20 class=columnstyle><input type=checkbox name=deleted id='deleted")
+                        .append(rowId)
+                        .append("' value=")
+                        .append(id)
+                        .append(" class=columnstyle></td>")
+                        .append("<td width=20 class=columnstyle ><input type=button value='Dept. Wise' onclick=btn1Clicked(this) id='btn1")
+                        .append(rowId)
+                        .append("' class=sbttn style='visibility:hidden'></td>")
+
+                        .append("</tr>");
+                id++;
+            }
+            sb_code.append("</table>");
+            return sb_code.toString();
+        }
+
+        private HashMap<String,String> getServicesSupplies()throws Exception{
+
+            HashMap<String,String> hashMap = new HashMap<>();
+
+            CentRecordSet centRecordSet = null;
+
+            StringBuilder sb_Query = new StringBuilder();
+
+            sb_Query.append(" SELECT PPY_CODE , PPY_DESC FROM PR_GC_PY_PAYMENT_NATURE WHERE PPY_CODE IN ( '001' , '002' , '999' ) ");
+
+            centRecordSet  = new ManData().executeQueryForRowSet(sb_Query.toString());
+
+            while(centRecordSet.next()){
+                hashMap.put(centRecordSet.getString("PPY_CODE"),centRecordSet.getString("PPY_DESC"));
+            }
+
+            return  hashMap;
+        }
+
+    %>
+    <%
+        ManData md=null;
+        if (session.getAttribute("ManData")!=null){
+            md=(ManData)session.getAttribute("ManData");
+        } else {
+            md=new ManData();
+            session.setAttribute("ManData",md);
+        }
+
+        session.removeAttribute("LOCACODE");
+
+        String payNature = "";
+
+        if(request.getSession().getAttribute("PPY_CODE") == null || String.valueOf(request.getSession().getAttribute("PPY_CODE")).length() == 0){
+        }else{
+            payNature = (String)request.getSession().getAttribute("PPY_CODE");
+            /*session.setAttribute("PPY_CODE",centlib.web.WebUtil.getParamValue(request,"PPY_CODE"));*/
+        }
+
+        String paymentDesc = "";
+
+        String stQuery = " SELECT PPY_DESC FROM PR_GC_PY_PAYMENT_NATURE WHERE PPY_CODE = ? ";
+
+        ParameterCollection pc = new ParameterCollection();
+
+        pc.put("PPY_CODE",(String) session.getAttribute("PPY_CODE"), Types.VARCHAR);
+
+        try {
+            CentRecordSet centRecordSet = new ManData().executeQueryForRowSet(stQuery, pc, null);
+
+            if (centRecordSet.next()) {
+                paymentDesc = centRecordSet.getString("PPY_DESC");
+            }
+        }catch(Exception e){
+            System.out.println(e.getMessage());
+        }
+    %>
+    <script>
+
+        <% if(session.getAttribute("PSR_SRV_CODE")==null) {%>
+        alert('Please select a record');
+        window.location.replace("../gnled/ac_gl_services_region_setup.jsp");
+        <%} else if( session.getAttribute("PSR_SRNO")==null){%>
+        alert('Please select period first');
+        window.location.replace("../gnled/pgg_se_servicesperiodsetup.jsp");
+        <%}%>
+
+        highlightMenuOption("../../gnled/pgg_se_serviceperiodsetup.jsp","menuTable");
+
+        maxNo = 1;
+        discountMaxNo = 1;
+        function checkAll(obj)
+        {
+            for(k=0;k<99999;k++)
+            {
+                id = "00000"+k;
+                id = id.substring(id.length-6);
+
+                if(document.getElementById('PTX_CODE_pk_'+id)==null)
+                    break;
+
+                document.getElementById('deleted'+id).checked = (obj.checked);
+            }
+        }
+
+        function updateClicked()
+        {
+            if(document.getElementById('mappingType')!=null)
+                document.getElementById('mappingType').disabled = false;
+
+            for(j=0;j<99999;j++) {
+
+                id = "00000" + j;
+                id = id.substring(id.length - 6);
+
+                if (document.getElementById('PTX_CODE_pk_' + id) == null)
+                    break;
+                //document.getElementById('PPY_CODE'+id).disabled = false;
+            }
+
+                prepareForSubmit();
+            document.myForm.action="../servlet/geninslib.parameters.SaveSrvcRateRegionWiseSetup";
+            document.myForm.submit();
+        }
+        function setCheckBoxes()
+        {
+
+            for(j=0;j<99999;j++) {
+
+                id = "00000"+j;
+                id = id.substring(id.length-6);
+
+                if(document.getElementById('PTX_CODE_pk_'+id)==null)
+                    break;
+
+                for(i=0;i<prodArry.length;i++) {
+                    loc = prodArry[i].split('~')[2];
+                    var stdrate = prodArry[i].split('~')[3];
+                    var redrate = prodArry[i].split('~')[4];
+                    var adjrate = prodArry[i].split('~')[5];
+                    var payNature = prodArry[i].split('~')[6];
+
+                    if(document.getElementById('PTX_CODE_pk_'+id).value == loc)
+                    {
+                        document.getElementById('PSR_STD_RATE'+id).value = stdrate;
+                        document.getElementById('PSR_RED_RATE'+id).value = redrate;
+                        document.getElementById('PSR_ADJ_RATE'+id).value = adjrate;
+                        //document.getElementById('PPY_CODE'+id).value = payNature;
+                        document.getElementById('deleted'+id).checked = true;
+
+                    }
+                }
+/*                document.getElementById('PPY_CODE'+id).value = '<%=payNature%>';
+                document.getElementById('PPY_CODE'+id).disabled = true;*/
+            }
+        }
+
+        function btn1Clicked(cid)
+        {
+            /*            id = cid.id.substring(cid.id.length-6);
+                        //document.myForm.LOCACODE.value = document.getElementById('PLC_LOCACODE_pk_'+id).value;
+                        document.myForm.RSK_REGIONCODE.value = document.getElementById("PRG_RSKREGNCODE_pk_" + id).value;
+                        //document.myForm.bclassdesc.value = document.getElementById('LOC_DESC'+id).value;
+
+                        document.myForm.action = '../genins/pgg_se_chrgregionrate_deptwise_setup.jsp';
+                        document.myForm.submit();*/
+
+        }
+
+        function prepareForSubmit()
+        {
+            document.getElementById('Layer133').innerHTML = '<img src="../shmalib/images/tooltip-loading.gif" alt="" /> <h4>Request is in process!, please wait....................</h4>';
+            document.getElementById('Layer133').style.visibility = 'visible';
+
+            if(document.getElementById('Layer11')!=null)
+                document.getElementById('Layer11').style.visibility = 'hidden';
+
+            document.getElementById('Button').style.visibility = 'hidden';
+        }
+
+        function valueChanged()
+        {
+            document.getElementById('Layer133').innerHTML = '<br /><h4>Values Changed!, please click Show Button....................</h4>';
+            document.getElementById('Layer133').style.visibility = 'visible';
+
+            if(document.getElementById('Layer11')!=null)
+                document.getElementById('Layer11').style.visibility = 'hidden';
+
+            document.getElementById('Button').style.visibility = 'hidden';
+        }
+
+        function numFieldOnFocus(cid)
+        {
+            cid.value = removeChar(cid.value,',');
+        }
+
+        function applyComma(cid)
+        {
+            if(!validate(cid,'n',false))
+            {
+                cid.value = 0;
+                return;
+            }
+
+            setCommaInField(cid);
+        }
+    </script>
+</head>
+<body DIR='<%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"LANGDIR")%>' onhelp="window.event.returnValue=false" oncontextmenu="called(); return false;" onKeyDown="keyD(event)">
+<DIV id=Layer1 language=javascript style="FONT-FAMILY: Verdana; FONT-SIZE: xx-small; FONT-WEIGHT: bold; HEIGHT: 120px; LEFT: 10px; OVERFLOW: auto; POSITION: absolute; TOP: 0px; VISIBILITY: visible; WIDTH: 99%">
+    <table width="98%" >
+        <tr>
+            <td rowspan=4 valign=bottom class=heading colspan="2"><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"pgg_se_srvc_regionwisesetup_setup")%></td>
+        </tr>
+        <tr>
+            <td width="60"><b><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"pgg_se_chargesrateriskregionwisesetup_code")%></b></td>
+            <td width="30"><%=session.getAttribute("PSR_SRV_CODE")%></td>
+            <td width="88"><b><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"pgg_se_srvc_regionwisesetup_desc")%></b></td>
+            <td width="175" ><%=session.getAttribute("PSR_SRV_DESC")%></td>
+        </tr>
+        <tr>
+            <td width="60"><b><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"pgg_se_srvc_regionwisesetup_datefrom")%></b></td>
+            <td width="30"><%=session.getAttribute("PSR_DATE_FROM")%></td>
+            <td width="60"><b><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"pgg_se_srvc_regionwisesetup_dateto")%></b></td>
+            <td width="30"><%=session.getAttribute("PSR_DATE_TO")%></td>
+        </tr>
+        <tr>
+            <td width="60"><b><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"pgg_se_srvc_regionwisesetup_pay_nat_code")%></b></td>
+            <td width="30"><%=session.getAttribute("PPY_CODE")%></td>
+            <td width="60"><b><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"pgg_se_srvc_regionwisesetup_pay_nat_desc")%></b></td>
+            <td width="30"><%=paymentDesc%></td>
+        </tr>
+    </table>
+    <hr color=gray>
+</DIV>
+<div id="Layer133" style="FONT-FAMILY: Verdana; FONT-SIZE: 14px; FONT-WEIGHT: bold; HEIGHT: 62%; padding-top:15%; text-align:center; LEFT: 10px; OVERFLOW: auto; POSITION: absolute; TOP: 70px; VISIBILITY: hidden; WIDTH: 98%">
+    <h4>Request is in process!, please wait.....................</h4>
+</div>
+
+
+<DIV id=Layer1122 language=javascript style="FONT-FAMILY: Verdana; FONT-SIZE: xx-small; FONT-WEIGHT: bold; HEIGHT: 80%; LEFT: 10px; OVERFLOW: auto; POSITION: absolute; TOP: 60px; VISIBILITY: visible; WIDTH: 700px">
+    <form name=myForm action="../para/pgn_se_partylocation.jsp" method="post">
+        <input type=hidden name='POR_ORGACODE_pk_' value='<%=session.getAttribute("POR_ORG_CODE")%>' >
+        <input type=hidden name='SERVICE' id='SERVICE' value='<%=session.getAttribute("PSR_SRV_CODE")%>' >
+        <input type=hidden name='PERIOD' id="PERIOD" value='<%=session.getAttribute("PSR_SRNO")%>' >
+        <%--<input type=hidden name='PPY_CODE_m_' id="PPY_CODE_m_" value='<%=session.getAttribute("PPY_CODE_m_")%>' >--%>
+
+</div>
+<DIV id=Layer11 language=javascript style="FONT-FAMILY: Verdana; FONT-SIZE: xx-small; FONT-WEIGHT: bold; HEIGHT: 82%; LEFT: 10px; OVERFLOW: auto; POSITION: absolute; TOP: 105px;; VISIBILITY: visible; WIDTH: 90%;">
+
+<%--
+    <tr>
+        <td>
+            <b><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"pgg_se_srvc_regionwisesetup_pay_nature")%></b>
+
+        </td>
+        <td>
+
+            <dataCombo:combo sourceCol="PPY_CODE"
+                             queryExtraInfo="  WHERE PPY_CODE IN ( '001' , '002' , '999' ) ORDER BY PPY_CODE "
+                             extraInfo="class='combo' id='PPY_CODE'  onchange='showClicked()'"
+                             tableName='<%=secmanlib.common.SimpleCryptor.encrypt("PR_GC_PY_PAYMENT_NATURE")%>'
+                             colName="PPY_DESC" comboName="PPY_CODE" comboWidth="100px"/>
+        </td>
+        <td>
+            <input type=button name=cmd_Show value="   Show   " onclick ='showClicked()' id="cmd_Show" class=sbttn>
+        </td>
+
+--%>
+    <%=getLocHTML(request,md,payNature)%>
+
+    <input type=hidden name=control>
+</div>
+
+<DIV id=Button language=javascript style="FONT-FAMILY: Verdana; FONT-SIZE: xx-small; FONT-WEIGHT: bold; HEIGHT: <%=application.getAttribute("ButtonHeight")%>px; LEFT: <%=application.getAttribute("ButtonLeft")%>px; OVERFLOW: auto; POSITION: absolute; TOP: 94%; VISIBILITY: visible; WIDTH: <%=application.getAttribute("ButtonWidth")%>px">
+    <input type=button accessKey=s name=cmd_Save class=button value="Save/Update" onclick=updateClicked()>
+    <input accessKey=b name=cmd_Back class=button  type=button value="  Back  " onclick="window.location.replace('../gnled/pgg_se_servicesperiodsetup.jsp')">
+</DIV>
+</form>
+<script>
+    <%
+      out.println(getDataArray(md,request,payNature));
+
+    %>
+
+    function showClicked(){
+
+        document.myForm.PPY_CODE_m_.value = document.getElementById("PPY_CODE").value;
+        prepareForSubmit();
+        document.myForm.action = '../gnled/pgg_se_srvc_regionwisesetup.jsp';
+        document.myForm.submit();
+    }
+
+    setCheckBoxes();
+
+</script>
+
+</body>
+</html>

@@ -1,0 +1,2705 @@
+<%@ include file="../genins/PageController.jsp" %>
+<!--
+	Author            = Muhammad Irfan
+	Date Created      = 15/5/2002
+	Last Modified     = 
+	Short Description = 
+-->
+<%@ page import="dbacclib.ManData,geninslib.policy.*,geninslib.policy.beans.DocumentHeaderBean,parameter.ParameterConditionHandler,shma.version.VersionController,utility.StringHandler" %>
+<%@ page import="java.math.BigDecimal" %>
+<%@ page import="java.util.Vector" %>
+<html>
+<head>
+    <%!
+	private String getPerilComboLocCondition(ManData md,HttpSession session,ServletContext application)
+	{
+		ParameterConditionHandler pch = new ParameterConditionHandler(md);
+		String str_ComboCond=pch.getBranchCondition(session,application,"PPE");
+		return str_ComboCond;
+	}
+	private String getTariffLocCondition(ManData md,HttpSession session,ServletContext application)
+	{
+		ParameterConditionHandler pch = new ParameterConditionHandler(md);
+		String str_ComboCond=pch.getBranchCondition(session,application,"PTF");
+		return str_ComboCond;
+	}
+ %>
+ <%
+	//These header information make it sure that page will not store in browser cachee
+	//set the jsp file name so that we can come on it, after performing any operation(save,delete,update) etc.
+	session.setAttribute("sendTo","/genins/ggu_se_item_risk.jsp");
+
+       	ManData md=null;
+	if (session.getAttribute("ManData")!=null)
+		md=(ManData)session.getAttribute("ManData");
+	else 
+	{
+		md=new ManData();
+		session.setAttribute("ManData",md);
+	}
+	
+	boolean deductibles = BusinessClassHandler.isDeductiblesExcessAllow(md,session);
+	
+	String tempPerils="";
+	String tempExclusions="";
+	String tempVoluntaryExcess="";
+	String tempInclusions="";
+	String tempOthers="";
+	String tempOther2="";
+	String tempOther3="";	
+	String tempOther4="";
+	String query = null;
+	boolean moneyInsurance=false,liabilityInsurance=false,calculationOnAAL=false;	
+	
+	int roundedPrecision = geninslib.CurrencyEvaluator.getRoundDecimalPrecision(new ConditionHandler(session,request).getDocCurrency(md,null));
+	
+	BusinessClassHandler bch = new BusinessClassHandler(session);
+	DocumentHeaderHandler dhh = new DocumentHeaderHandler(session,request);
+	String policyType = (String)session.getAttribute("GDH_POLICYTYPE");
+	boolean applyRecursion = true;
+	if(bch.isBondOrCarOrEarBClass(application) && (!dhh.isEndorsementDocType(application)) && policyType.equalsIgnoreCase("A"))
+			applyRecursion = false;
+
+	boolean isPremMoreThanSumInsuredAllow = bch.isPremiumMoreThanSumInsuredAllowed(md,(String)session.getAttribute("PBC_BUSICLASS_CODE"));
+
+	boolean deptMarine = false,deptMotor=false;
+	if(session.getAttribute("PDP_DEPT_CODE")!=null && ((String)session.getAttribute("PDP_DEPT_CODE")).equalsIgnoreCase((String)application.getAttribute("DEPTT_MARINE")))
+		deptMarine = true;
+	else if(session.getAttribute("PDP_DEPT_CODE")!=null && ((String)session.getAttribute("PDP_DEPT_CODE")).equalsIgnoreCase((String)application.getAttribute("DEPTT_MOTOR")))
+		deptMotor = true;
+
+	session.removeAttribute("GAC_ACTIONSERIALNO");
+	session.removeAttribute("perilDesc");
+
+	boolean fireDept = false,motorDept = false,miscDept = false,healthDept = false;
+	boolean isFireBusinessClass = false;
+	if(session.getAttribute("PDP_DEPT_CODE")!=null && ((String)session.getAttribute("PDP_DEPT_CODE")).equalsIgnoreCase((String)application.getAttribute("DEPTT_FIRE")))
+		fireDept = true;
+	else if(session.getAttribute("PDP_DEPT_CODE")!=null && ((String)session.getAttribute("PDP_DEPT_CODE")).equalsIgnoreCase((String)application.getAttribute("DEPTT_MOTOR")))
+		motorDept = true;
+	else if(session.getAttribute("PDP_DEPT_CODE")!=null && (geninslib.policy.WebObjectsParser.isApplicationAttributeValid((String)session.getAttribute("PDP_DEPT_CODE"),"DEPTT_MISC",application)))
+		miscDept = true;
+	else if(session.getAttribute("PDP_DEPT_CODE")!=null && ((String)session.getAttribute("PDP_DEPT_CODE")).equalsIgnoreCase((String)application.getAttribute("DEPTT_HEALTH")))
+		healthDept = true;
+
+	// GH-741 #6: this screen is shared across departments (reached from itemwiseentry.jsp
+	// too) - gate the FC Base Value / Exchange Rate columns to Travel only.
+	boolean isTravelItemBClass = BusinessClassHandler.isTravelItemBClass(request,(String)session.getAttribute("PBC_BUSICLASS_CODE"));
+
+	 if(session.getAttribute("PBC_BUSICLASS_CODE")!=null && ((String)session.getAttribute("PBC_BUSICLASS_CODE")).equalsIgnoreCase((String)application.getAttribute("BCLAS_DFIREPOLICY")))
+		isFireBusinessClass = true;
+
+	boolean sectionAllowed = false;
+	if(miscDept)
+		sectionAllowed = BusinessClassHandler.isSectionEntryActive((String)session.getAttribute("PBC_BUSICLASS_CODE"),request,md,null);
+
+	boolean isHealthOnly = (VersionController.HEALTH_ONLY && healthDept);
+	String bc = (String)session.getAttribute("PBC_BUSICLASS_CODE");
+	bc = bc.substring(0,3);
+
+	GeneralDtlHandler gdh = new GeneralDtlHandler(session,request);
+	calculationOnAAL = gdh.isMoneyAndLiablityInsuranceWithCalculateOnAll(md,application);
+	session.setAttribute("PCY_ACTIONTYPE","PR");
+
+   boolean mandatoryPerilfound = (session.getAttribute("dt") != null && session.getAttribute("dt").equals("true"));
+   boolean isRateBased = session.getServletContext().getAttribute("AMACNTRL_RATE_BASED") != null && session.getServletContext().getAttribute("AMACNTRL_RATE_BASED").equals("Y");
+
+	boolean applyAnnual = false;
+	if (centlib.web.WebUtil.getParamValue(request,"GIH_ITEMNO")!=null)
+	{
+		session.setAttribute("GIH_ITEMNO",centlib.web.WebUtil.getParamValue(request,"GIH_ITEMNO"));
+		session.setAttribute("GIH_SUMINSURED",centlib.web.WebUtil.getParamValue(request,"GIH_SUMINSURED"));
+		session.setAttribute("PPR_PROD_CODE",centlib.web.WebUtil.getParamValue(request,"PPR_PROD_CODE"));
+		// GH-741 #6: carried through from the item header so the FC Base Value/Exchange Rate
+		// columns below can mirror GIH_FOREIGNCURRENCY_SI/GIH_EXCHANGE_RATE_SI without a DB read.
+		session.setAttribute("GIH_FOREIGNCURRENCY_SI",centlib.web.WebUtil.getParamValue(request,"GIH_FOREIGNCURRENCY_SI"));
+		session.setAttribute("GIH_EXCHANGE_RATE_SI",centlib.web.WebUtil.getParamValue(request,"GIH_EXCHANGE_RATE_SI"));
+
+		boolean normalPolicyType = (session.getAttribute("GDH_POLICYTYPE")!=null && ((String)session.getAttribute("GDH_POLICYTYPE")).equals("N"));
+		if(normalPolicyType && centlib.web.WebUtil.getParamValue(request,"GIH_RISK_PERIOD")!=null && centlib.web.WebUtil.getParamValue(request,"GIH_RISK_PERIOD").equals("N"))
+			session.setAttribute("GIH_RISK_PERIOD","N");
+		else
+			session.removeAttribute("GIH_RISK_PERIOD");
+	}
+	
+	if(session.getAttribute("GIH_RISK_PERIOD")!=null && ((String)session.getAttribute("GIH_RISK_PERIOD")).equals("N"))
+		applyAnnual = true;
+	else if(session.getAttribute("GDH_POLICYTYPE")!=null && ((String)session.getAttribute("GDH_POLICYTYPE")).equals("A"))
+		applyAnnual = true;
+
+	String queryParaControl = "select PPL_WIDTH from pr_gn_pl_paralevels where PPC_PARA_TYPE='PBC' and PPL_LVL_TYPE<(select max(ppl_lvl_type) from pr_gn_pl_paralevels where PPC_PARA_TYPE='PBC')";
+	int count = 0;
+	ResultSet paraControlRS = null;
+	try
+	{
+		paraControlRS = md.executeQuery(queryParaControl);
+		while(paraControlRS.next())
+			count = count + Integer.parseInt(paraControlRS.getString(1));
+	}
+	finally
+	{
+		md.closeResultSet(paraControlRS);
+	}
+
+	 boolean disableAllFieldsInCovernote  = "Y".equals(application.getAttribute("ADAMT_DISABLE_BASEDOC_CN"));
+	 boolean isCommDateLockEnabled  = "Y".equals(application.getAttribute("AMACNTRL_COMMDATE_LOCK"));
+   boolean isSavedRecord = (session.getAttribute("GDH_DOC_REFERENCE_NO")!=null && ((String)session.getAttribute("GDH_DOC_REFERENCE_NO")).length()>0);
+
+   String docType = (String)session.getAttribute("PDT_DOCTYPE");
+   boolean isAmmendment = docType != null && ((String) docType).equals(application.getAttribute("DOCTY_AMENDMENT"));
+   String deptCode = (String)session.getAttribute("PDP_DEPT_CODE");
+   boolean enableAltFieldsInCovernote  = "Y".equals(application.getAttribute("ADAMT_ENABLE_ALT_IN_CN"));
+     boolean isTravelDept = deptCode != null && deptCode.equalsIgnoreCase((String) application.getAttribute("DEPTT_TRAVEL"));
+
+	 DocumentHeaderBean obj_DocumentHeaderBean = new DocumentHeaderBean((String)session.getAttribute("POR_ORG_CODE"),(String)session.getAttribute("GDH_DOC_REFERENCE_NO"),(String)session.getAttribute("GDH_RECORD_TYPE"));
+
+     StringBuffer queryIgnoreBaseValue = new StringBuffer("select ")
+		 .append(QueryMaster.checkNull("PBC_IGNOREBASEVALUE", "'N'"))
+		 .append(" from PR_GG_BC_BUSINESS_CLASS where PBC_BUSICLASS_CODE='")
+		 .append(session.getAttribute("PBC_BUSICLASS_CODE"))
+		 .append("' and POR_ORG_CODE='")
+		 .append(session.getAttribute("POR_ORG_CODE"))
+		 .append("' and PLC_LOC_CODE='")
+		 .append(application.getAttribute("LOCAT_HEAD_OFFICE"))
+		 .append("' and PDP_DEPT_CODE='")
+		 .append(session.getAttribute("PDP_DEPT_CODE")).append("'");
+
+     ResultSet ignoreBVRS = null;
+     String isIgnoreBaseValueTag = "";
+     try
+     {
+         ignoreBVRS = md.executeQueryWithE(queryIgnoreBaseValue.toString());
+         while(ignoreBVRS.next())
+             isIgnoreBaseValueTag = ignoreBVRS.getString(1);
+     }
+     finally
+     {
+         md.closeResultSet(ignoreBVRS);
+     }
+
+	/*if(centlib.web.WebUtil.getParamValue(request,"control")!=null)
+	{
+		//response.sendRedirect("../genins/UpdateItemHeader.jsp");
+		RequestDispatcher rd = request.getRequestDispatcher("/genins/UpdateItemHeader.jsp");
+		rd.forward(request,response);
+	}*/
+	
+	boolean allowRateOrFlatAmountAny = geninslib.InitializeParameters.allowRateOrFlatAmountAny();
+	 PerilHandler obj_PerilHandler = new PerilHandler(session,request);
+	 String basicContributionAmount = obj_PerilHandler.getBasicContributionAmount((String)session.getAttribute("GIH_ITEMNO"),md, session);
+
+	 boolean isBClassThirdPartyReversal = BusinessClassHandler.isThirdPartyReversal((String) session.getAttribute("PBC_BUSICLASS_CODE"), session, md, null);
+%> 
+ <!--	For all the controls format (buttons, textboxes etc.) this stylesheet is used. --> 
+ <LINK href="../shmalib/stylesheets/Style.css" rel=stylesheet> 
+  
+ <!--	Java Script golobal functions written in this jsp file. --> 
+ <script language="JavaScript" src="../shmalib/jscript/JSource.js"></script>  
+ <script language="JavaScript" src="../shmalib/jscript/JTabular.js"></script>   
+  
+ <script language="JavaScript"> 
+
+	roundedPrecision = <%=roundedPrecision%>;
+
+<%
+	DateHandler dh = new DateHandler();
+	int dateVal[] = dh.getTotalWholeYears((String)((String)session.getAttribute("GDH_COMMDATE")).split(" ")[0],(String)((String)session.getAttribute("GDH_EXPIRYDATE")).split(" ")[0],application,session);
+	out.println("wholeYear="+dateVal[0]+";");
+	out.println("noOfDaysBalance="+dateVal[1]+";");
+	out.println("isLeapYear="+(dateVal[2]==0?"false":"true")+";");	
+	
+	boolean isSlientProvisionAllowed = (BusinessClassHandler.isSilentPeriodProvisionAllowed(md,session) && session.getAttribute("GGD_SILENTPERIOD_FROM") !=null && ((String)session.getAttribute("GGD_SILENTPERIOD_FROM")).length()>0);
+	
+	int silentDateVal[] = null;
+	int workingDateVal[] = null;
+
+	String silentPeriodFrom = (String)session.getAttribute("GGD_SILENTPERIOD_FROM");
+	String silentPeriodTo = (String)session.getAttribute("GGD_SILENTPERIOD_TO");
+	String workingPeriodFrom = (String)session.getAttribute("GGD_WORKINGPERIOD_FROM");
+	String workingPeriodTo = (String)session.getAttribute("GGD_WORKINGPERIOD_TO");
+
+	if(isSlientProvisionAllowed && (silentPeriodFrom!=null && silentPeriodFrom.length() >0 ) && (silentPeriodTo != null && silentPeriodTo.length() > 0))
+	{
+		silentDateVal = dh.getTotalWholeYears(silentPeriodFrom,silentPeriodTo,application,session);
+		out.println("silentWholeYear="+silentDateVal[0]+";");
+		out.println("silentNoOfDaysBalance="+silentDateVal[1]+";");
+		out.println("silentIsLeapYear="+(silentDateVal[2]==0?"false":"true")+";");
+	}
+	if(isSlientProvisionAllowed && (workingPeriodFrom != null && workingPeriodFrom.length() > 0) && (workingPeriodTo != null && workingPeriodTo.length() > 0))
+	{
+		workingDateVal = dh.getTotalWholeYears(workingPeriodFrom,workingPeriodTo,application,session);
+		out.println("workingWholeYear="+workingDateVal[0]+";");
+		out.println("workingNoOfDaysBalance="+workingDateVal[1]+";");
+		out.println("workingIsLeapYear="+(workingDateVal[2]==0?"false":"true")+";");
+	}
+
+
+	boolean isAutoDeductible  = "Y".equals(application.getAttribute("AMACNTRL_AUTO_PERIL_DEDUCTIBLE"));
+%>
+	function checkDuplicate2(x1,val) {
+		var str1,str4,str,ls1,ls2,ls3;
+		for (k=0;k<1000000;k++) {
+			ls="000000"+k;
+			ls=ls.substring(ls.length-6,ls.length);
+			str1=document.getElementById(x1+ls);
+			ls3="000000"+(k+1);
+			ls3=ls3.substring(ls3.length-6,ls3.length);
+			if (str1==null){
+				break;
+			}
+			if (document.getElementById(x1+ls3)==null && document.getElementById(val+ls).value==""){
+				break;
+			}
+			for (j=k+1;j<1000000;j++) {
+				ls1="000000"+j;
+				ls1=ls1.substring(ls1.length-6,ls1.length);
+				ls2="000000"+(j);
+				ls2=ls2.substring(ls2.length-6,ls2.length);
+				str4=document.getElementById(x1+ls1);
+				if (str4==null){
+					break;
+				}
+				if (document.getElementById(x1+ls2)==null  && document.getElementById(val+ls1).value=="") {
+					break;
+				}
+				if (str1.value==str4.value)
+					return false;
+			}
+		}
+		return true;
+	}
+
+  function disableAllFields()
+  {
+    $('input[type=text]').attr('readonly','readonly');
+    $('input[type=text]').attr("class","inputtextreadonly");
+    $('select').attr("disabled","disabled");
+    $('input[type=checkbox]').attr('disabled','disabled');
+
+  }
+
+  function enableAllFields()
+  {
+      $('input[type=text]').removeAttr("readonly");
+      $('input[type=text]').attr("class", "inputtext");
+      $('select').removeAttr("disabled");
+      $('input[type=checkbox]').removeAttr("disabled");
+      $('#text44').attr('readonly','readonly');
+      $('#text44').attr("class","inputtextreadonly");
+      $('#text55').attr('readonly','readonly');
+      $('#text55').attr("class","inputtextreadonly");
+      $('#gross_premium').attr('readonly','readonly');
+      $('#gross_premium').attr("class","inputtextreadonly");
+      $('#policy_charges').attr('readonly','readonly');
+      $('#policy_charges').attr("class","inputtextreadonly");
+      $('#net_premium').attr('readonly','readonly');
+      $('#net_premium').attr("class","inputtextreadonly");
+      $('#text66').attr('readonly','readonly');
+      $('#text66').attr("class","inputtextreadonly");
+      for(i=0;i<totalRecords-1;i++) {
+          id = "00000" + i;
+          id = id.substring(id.length - 6);
+          $('#GAC_AMOUNT_r_'+id).attr('readonly', 'readonly');
+          $('#GAC_ACTION_CODE_r_'+id).attr("disabled", "disabled");
+      }
+
+  }
+
+  function send(a,b)
+ { 
+ 	if (b==1){ 
+
+	if(!checkDuplicate2("GAC_ACTION_CODE_r_","GAC_AMOUNT_r_")){
+		alert("Duplicate Perils Found");
+		return;
+	}
+	
+	if(document.getElementById('GAC_ACTION_CODE_r_000000').options[0]==null)
+		return;
+
+
+<% if(!deptMarine){ %>
+		if(validateGroup())
+		{
+			alert('Claim Loading and No Claim Bonus Not allow at the same time');
+			return;
+
+		}
+<% } %>
+
+<%if(allowRateOrFlatAmountAny) {%>
+	for(i=0;i<totalRecords-1;i++)
+	{
+		id = "00000"+i;
+		id = id.substring(id.length-6);
+		
+		flatVal = document.getElementById('GAC_FLAT_AMOUNT_r_'+id).value;
+		flatVal = removeChar(flatVal,',');
+		if(flatVal=='')
+			flatVal = 0;
+		
+		
+		rate = document.getElementById('GAC_RATE_r_'+id).value;
+		rate = removeChar(rate,',');
+		if(rate=='')
+			rate = 0;
+			
+		if(parseFloat(rate) > 0 && parseFloat(flatVal)>0)
+		{
+			alert("Please Enter either Rate or Flat Amount at serial no. "+document.getElementById('GAC_ACTIONSERIALNO'+id).value);
+			document.getElementById('GAC_FLAT_AMOUNT_r_'+id).focus();
+			return;
+		}
+	}
+<%}%>
+
+<% if(!isPremMoreThanSumInsuredAllow){ %>
+		
+		for(i=0;i<totalRecords-1;i++)
+		{
+				id = "00000"+i;
+				id = id.substring(id.length-6);
+				
+				baseValue = document.getElementById('GAC_BASEVALUE_r_'+id).value;
+				baseValue = removeChar(baseValue,',');
+				if(baseValue=='')
+					baseValue = 0;
+
+				
+				flatVal = document.getElementById('GAC_FLAT_AMOUNT_r_'+id).value;
+				flatVal = removeChar(flatVal,',')
+				if(flatVal=='')
+					flatVal = 0;
+
+			<%if(isBClassThirdPartyReversal == false){%>
+				if(parseFloat(flatVal)>parseFloat(baseValue))
+				{
+					alert("Flat Amount is Greater Than <%=healthDept?"Limit":"Base Value"%> in serial no. "+document.getElementById('GAC_ACTIONSERIALNO'+id).value);
+					document.getElementById('GAC_FLAT_AMOUNT_r_'+id).focus();
+					return;
+				}
+			<%}%>
+		}
+<% } %>
+
+
+for(i=0;i<totalRecords;i++)
+{
+	id = "00000"+i;
+	id = id.substring(id.length-6);
+	
+	actionCode = document.getElementById('GAC_ACTION_CODE_r_'+id).value;	
+	if(actionCode == '')
+		continue;
+	
+	baseValue = document.getElementById('GAC_BASEVALUE_r_'+id).value;
+	baseValue = removeChar(baseValue,',');
+	baseValue = removeChar(baseValue,' ');
+	serialNo = document.getElementById('GAC_ACTIONSERIALNO'+id).value;
+	var possibleValuesStr = '';
+	<%if(!deptMarine){%>
+		for(j = 0; j < tariffgroup.length; j++)
+		{
+			tg = tariffgroup[j].split("~");
+			if(actionCode == tg[0])
+			{
+				if(tg[4] != '' && tg[4].length > 0)
+				{
+					possibleValuesStr = tg[4];
+					break;
+				}
+				break;
+			}
+		}
+
+	<%}%>
+	 
+	 if(possibleValuesStr != '')
+	 {
+		 if(baseValue =='')
+		 {
+			 alert("Please Enter Base Value at Serial No. "+serialNo);
+			 return;
+		 }
+     possibleValuesStr = removeChar(possibleValuesStr, ' ');
+		 var possibleValuesArr = possibleValuesStr.split(",");
+		 var possibleValueFound = false;
+		 for(p=0;p<possibleValuesArr.length;p++)
+		 {
+			 if(possibleValuesArr[p] == baseValue)
+			 {
+				 possibleValueFound = true;
+			 }
+		 }
+		 if(possibleValueFound == false)
+		 {
+			alert("Unable to Save, Possible Values For Base Value: "+possibleValuesStr+" at Serial no. "+serialNo);
+			return;
+		 }
+	 }
+}
+
+
+ 		document.getElementById('Layer11').style.visibility = 'hidden';
+ 		document.getElementById('Layer112').style.visibility = 'visible';
+ 		document.getElementById('Button').style.visibility = 'hidden';
+		setDisabled('GAC_ACTION_CODE_r_');
+		setDisabled('PSC_CODE_r_');
+		document.myForm.control.value = 'addclicked';
+		document.myForm.action="../servlet/dbmanlib.DetailSaveGISN";
+
+		var a = "00000"+(totalRecords-1);
+		a = a.substring(a.length-6);
+		if(document.getElementById('GAC_AMOUNT_r_'+a).value == '')
+			document.getElementById('GAC_AMOUNT_r_'+a).value = '0';
+
+
+		if(window.parent.frames["menuFrame"]!=null)
+			window.parent.frames["menuFrame"].inprocess = true;
+
+		document.myForm.submit();
+	}
+ } 
+	function send2(a,b){
+	if (b==1) 
+	{
+		document.myForm.control.value = 'delete';
+ 		document.getElementById('Layer11').style.visibility = 'hidden';
+ 		document.getElementById('Layer112').style.visibility = 'visible';
+ 		document.getElementById('Button').style.visibility = 'hidden';
+		setDisabled('GAC_ACTION_CODE_r_');
+		setDisabled('PSC_CODE_r_');
+		document.myForm.action="../servlet/dbmanlib.DetailDeleteGISN";
+		if(window.parent.frames["menuFrame"]!=null)
+			window.parent.frames["menuFrame"].inprocess = true;
+		
+		document.myForm.submit();
+	}
+
+
+	}
+
+
+ function btnClicked(cid){
+	var a = cid.id;
+	var id = eval(a.substring(a.length-6,a.length))+1;
+	var b = "000000"+id;
+	id = b.substring(b.length-6,b.length);
+
+	if(document.getElementById('GAC_ACTION_CODE_r_'+id).options.length==tariffarray.length){
+		var l=document.getElementById('GAC_ACTION_CODE_r_'+id).options.length;
+			for(j=l-1;j>=0;j--)
+		{
+			document.getElementById("GAC_ACTION_CODE_r_"+id).options[j]=null;
+		}	
+		var pos=0;		
+		for(e=0;e<productarray.length;e++){
+			for(j=0;j<tariffarray.length;j++){
+				var pcode=tariffarray[j].substring(0,9);
+				var pdesc=tariffarray[j].substring(tariffarray[j].lastIndexOf('~')+1);
+
+					var opt = new Option(pdesc,pcode);
+				if(pcode==productarray[e]){
+					
+
+					document.getElementById("GAC_ACTION_CODE_r_"+id).options[pos]=opt;
+					pos++;
+				}
+			}
+	
+		}
+		document.getElementById("GAC_ACTION_CODE_r_"+id).style.width="415px";
+
+	}else{
+		var l=document.getElementById('GAC_ACTION_CODE_r_'+id).options.length;
+			for(j=l-1;j>=0;j--)
+		{
+			document.getElementById("GAC_ACTION_CODE_r_"+id).options[j]=null;
+		}	
+		var pos=0;		
+			for(j=0;j<tariffarray.length;j++){
+				var pcode=tariffarray[j].substring(0,9);
+				var pdesc=tariffarray[j].substring(tariffarray[j].lastIndexOf('~')+1);
+
+					var opt = new Option(pdesc,pcode);
+				
+
+					document.getElementById("GAC_ACTION_CODE_r_"+id).options[pos]=opt;
+					pos++;
+			}
+	
+		
+		document.getElementById("GAC_ACTION_CODE_r_"+id).style.width="415px";
+
+	}
+ }
+ function setDisabled(cid) {
+	var a=0;
+	for (i=0;i<10000;i++) {
+		var ee="000000"+i;
+		var cc=cid+ee.substring(ee.length-6,ee.length);
+		if(document.getElementById(cc)==null)
+			break;
+		document.getElementById(cc).disabled=false;
+	}
+ }
+
+ <%
+
+
+	String commDate = (String)((String)session.getAttribute("GDH_COMMDATE")).split(" ")[0];
+	String expiryDate = (String)((String)session.getAttribute("GDH_EXPIRYDATE")).split(" ")[0];
+	int days = dh.getDays(commDate,expiryDate,md,session,application);
+	boolean isLeapYear = dh.isLeapDayInclude(commDate,expiryDate);
+	
+	if(!applyRecursion)
+	{
+		if(isLeapYear)
+			days = 366;
+		else
+			days = 365;
+	}
+	
+
+ %>
+
+ function revertFlatAmount(amt)
+ {
+	if(amt=='')
+		return 0;
+	amt = parseFloat(amt);
+	ratio = 100*wholeYear;
+	<%if(session.getAttribute("GDH_POLICYTYPE")!=null && ((String)session.getAttribute("GDH_POLICYTYPE")).equalsIgnoreCase("S")){ %>
+		//return Math.round((amt/(<%=session.getAttribute("rateForShortPeriod")%>+ratio))*100);		// for rounding
+		return round((amt/(<%=session.getAttribute("rateForShortPeriod")%>+ratio))*100,roundedPrecision);		// for rounding
+		
+		
+	<%}else{ %>
+		ratio = 365*wholeYear;	
+		if(isLeapYear)
+			//return Math.round(amt/(noOfDaysBalance+ratio)*366);
+			return round(amt/(noOfDaysBalance+ratio)*366,roundedPrecision);
+			
+		else
+			//return Math.round((amt/(noOfDaysBalance+ratio))*365);
+			return round((amt/(noOfDaysBalance+ratio))*365,roundedPrecision);
+			
+
+	<%}%>
+ }
+
+  function getFirePerilAmount(perilAmount)
+  {
+    if(perilAmount>0)
+      return (perilAmount*75)/100;
+    else
+      return perilAmount;
+  }
+
+ function setFlatAmt(actualAmt)
+ {
+	if(!<%=applyRecursion%>)
+		return actualAmt;
+	if(actualAmt=='')
+		return 0;
+	amt = parseFloat(actualAmt);
+	amt = amt*wholeYear;
+	<%if(session.getAttribute("GDH_POLICYTYPE")!=null && ((String)session.getAttribute("GDH_POLICYTYPE")).equalsIgnoreCase("S")){ %>
+		//return amt+Math.round((actualAmt*<%=session.getAttribute("rateForShortPeriod")%>)/100);		
+		return amt+round((actualAmt*<%=session.getAttribute("rateForShortPeriod")%>)/100,roundedPrecision);
+		
+	<%}else{ %>
+		if(isLeapYear)
+			//return amt+Math.round((actualAmt*noOfDaysBalance)/366);
+			return amt+round((actualAmt*noOfDaysBalance)/366,roundedPrecision);
+		else
+			//return amt+Math.round((actualAmt*noOfDaysBalance)/365);
+			return amt+round((actualAmt*noOfDaysBalance)/365,roundedPrecision);
+	<%}%>
+ }
+
+  function getAnnualPeril(sumInsured,rate,id)
+  {
+      return getProRataPeril(sumInsured,rate,id);
+  }
+  function getShortPeriodPeril(sumInsured,ratem,id)
+  {
+      perilAmount = 0;
+      calculationBase = getCalculationBasis(id);
+      perilAmount = (sumInsured*rate)/calculationBase;
+
+      return perilAmount;
+  }
+
+
+  function addOneDay()
+  {
+		<%if(fireDept || miscDept){ %>
+				return false;
+				//return true;
+		<% } else { %>
+			return false;
+		<% } %>
+  }
+
+
+  function calculatePerilAmount(perilAmount,days,isLeapYear,id)
+  {
+		var roundAmount = 0;
+	if(document.getElementById('GAC_SWPERIOD_TYPE_r_'+id)!=null)
+	{
+		var silentDays = silentPeriodDays.split('~')[0];
+		var workingDays = silentPeriodDays.split('~')[1];
+		if(document.getElementById('GAC_SWPERIOD_TYPE_r_'+id).value == 'SP')
+		{
+			if(silentDays.length>0)
+			{
+				roundAmount = perilAmount * silentWholeYear;
+				days = silentNoOfDaysBalance;
+				isLeapYear = silentIsLeapYear;
+			}
+				
+		}
+		else if(document.getElementById('GAC_SWPERIOD_TYPE_r_'+id).value == 'WP')
+		{
+			if(workingDays.length>0)
+			{
+				roundAmount = perilAmount * workingWholeYear;
+				days = workingNoOfDaysBalance;
+				isLeapYear = workingIsLeapYear;
+			}
+		}
+	}
+	else
+	{
+		roundAmount = perilAmount * wholeYear;
+		days = noOfDaysBalance;
+	}
+	
+    if(days == 0)
+    	return roundAmount;
+
+    if(isLeapYear)
+    {
+      if(<%=session.getAttribute("PDP_DEPT_CODE")!=null && (geninslib.policy.WebObjectsParser.isApplicationAttributeValid((String)session.getAttribute("PDP_DEPT_CODE"),"DEPTT_MISC",application))%>)
+      {
+        if(days==365)
+          perilAmount = (perilAmount*days)/365;
+        else
+        {
+          if(addOneDay() && days<366)
+          	perilAmount = (perilAmount*(days+1))/366;
+	  			else
+          	perilAmount = (perilAmount*days)/366;
+        }
+      }
+      else
+      {
+
+          if(addOneDay() && days<366)
+          	perilAmount = (perilAmount*(days+1))/366;
+          else
+        	perilAmount = (perilAmount*days)/366;
+       }
+      return roundAmount + perilAmount;
+    }
+    else
+    {
+      if(<%=session.getAttribute("PDP_DEPT_CODE")!=null && (geninslib.policy.WebObjectsParser.isApplicationAttributeValid((String)session.getAttribute("PDP_DEPT_CODE"),"DEPTT_MISC",application))%>)
+      {
+        if(days==364)
+          perilAmount = (perilAmount*days)/364;
+        else
+        {
+          if(addOneDay() && days<365)
+          {
+          	perilAmount = (perilAmount*(days+1))/365;
+          }
+					else
+					{
+          	perilAmount = (perilAmount*days)/365;
+          }
+        }
+      }
+      else
+      {
+          if(addOneDay() && days<365)
+          	perilAmount = (perilAmount*(days+1))/365;
+	  else
+        	perilAmount = (perilAmount*days)/365;
+      }
+      return roundAmount + perilAmount;
+    }
+
+  }
+
+<%=DocumentHeaderHandler.getSilentProvisionDays((String)session.getAttribute("POR_ORG_CODE"),(String)session.getAttribute("GDH_DOC_REFERENCE_NO"),md,null)%>
+
+
+  function getProRataPeril(sumInsured,rate,id)
+  {
+      perilAmount = 0;
+      calculationBase = getCalculationBasis(id);
+      perilAmount = (sumInsured*rate)/calculationBase;
+      days = <%=days%>;
+
+      perilAmount = calculatePerilAmount(perilAmount,days,isLeapYear,id);
+      return perilAmount;
+  }
+
+
+function calculateAndGetPerilAmount(sumInsured,fAmount,rate,cid)
+{
+	if(fAmount=='')
+		fAmount = 0;
+	perilAmount = 0;
+	id = cid.id;
+	id = id.substring(id.length-6);
+
+	<%if(applyAnnual){ %>
+	calculationBase = getCalculationBasis(id);
+	perilAmount = (sumInsured * rate) / calculationBase;
+
+	if(document.getElementById('GAC_SWPERIOD_TYPE_r_' + id) != null)
+	 perilAmount = calculatePerilAmount(perilAmount, <%=days%>, isLeapYear, id);
+	<%} else if(session.getAttribute("GDH_POLICYTYPE")!=null && ( ((String)session.getAttribute("GDH_POLICYTYPE")).equalsIgnoreCase("P") || ((String)session.getAttribute("GDH_POLICYTYPE")).equalsIgnoreCase("N"))){ %>
+	perilAmount = getProRataPeril(sumInsured, rate, id);
+	<%} else if(session.getAttribute("GDH_POLICYTYPE")!=null && ((String)session.getAttribute("GDH_POLICYTYPE")).equalsIgnoreCase("S")){ %>
+	perilAmount = getShortPeriodPeril(sumInsured, rate, id);
+	<% } %>
+
+	perilAmount = calculateRatePercent(perilAmount,cid);
+
+  perilAmount = perilAmount+parseFloat(fAmount);
+  if(perilAmount==0)
+		perilAmount = '';
+  return perilAmount;
+}
+
+ function getSumInsured(a)
+ {
+	sumInsured = document.getElementById('GAC_BASEVALUE_r_'+a).value;
+	if(sumInsured=='')
+ 		sumInsured = 0;
+	return sumInsured;
+
+ }
+ 
+ function ratelf2(cid)
+ {
+	var a = cid.id;
+	a = a.substring(a.length-6,a.length);
+	ratelf(document.getElementById('GAC_RATE_r_'+a));
+ }
+
+ function ratelf(cid)
+ {
+	if(!(validate(cid,'n',false)))
+		return;
+
+	if(cid.value=='')
+		cid.value='0';
+
+	var a = cid.id;
+	a = a.substring(a.length-6,a.length);
+
+	var a2 = "00000"+(parseFloat(a)+1);
+	a2 = a2.substring(a2.length-6);
+
+	if(document.getElementById('GDH_DOCUMENTNO_pk_'+a2)!=null)
+		changeValue(a);
+
+	sumInsured = getSumInsured(a);
+	sumInsured = removeChar(sumInsured,',');	
+	
+	fAmount = document.getElementById('GAC_FLAT_AMOUNT_r_'+a).value;
+	fAmount = removeChar(fAmount,',')
+	rate = cid.value;
+	document.getElementById('GAC_AMOUNT_r_'+a).value=calculateAndGetPerilAmount(sumInsured,fAmount,rate,cid);
+	setCommaInField(document.getElementById('GAC_AMOUNT_r_'+a));
+	<% if(!deptMarine){ %>
+		doCalculation(a);
+	<% } %>
+ }
+
+
+function doRound(cid)
+ {
+ 	value = document.getElementById(cid).value;
+ 	 value = removeChar(value,',');
+ 	
+ 	//document.getElementById(cid).value = Math.round(value);
+ 	document.getElementById(cid).value = round(value,roundedPrecision);
+ 	
+ 	setCommaInField(document.getElementById(cid));
+ }
+
+ function DropDownConv(cid)
+ {
+
+     id=cid.id;
+     id = id.substring(id.length-6);
+
+     actionCode = document.getElementById('GAC_ACTION_CODE_r_'+id).value;
+
+     var possibleValues = '';
+     <%if(!deptMarine){%>
+     for(j = 0; j < tariffgroup.length; j++)
+     {
+         tg = tariffgroup[j].split("~");
+         if(actionCode == tg[0])
+         {
+             if(tg[4] != '' && tg[4].length > 0)
+             {
+                 possibleValues = tg[4];
+                 break;
+             }
+             break;
+         }
+     }
+
+     if(possibleValues != '') {
+
+         var possibleValuesArray = possibleValues.split(",");
+
+         var sData = document.createElement('select');
+         sData.name = 'GAC_BASEVALUE_r_';
+         sData.id = 'GAC_BASEVALUE_r_'+id;
+         sData.className = 'combo';
+         sData.onmouseover = function(){ showComboToolTip(this); };
+         sData.onmouseout = function(){ UnTip(); };
+         sData.onhelp = function(){ window.event.returnValue=false; };
+         sData.style.textAlign = 'right';
+
+         sData.style.width = '112px';
+         sData.style.height = '19px';
+
+         if(document.getElementById("GAC_BASEVALUE_r_"+id).replaceNode)
+             document.getElementById("GAC_BASEVALUE_r_"+id).replaceNode(sData);
+         else
+             document.getElementById("GAC_BASEVALUE_r_"+id).parentNode.replaceChild(sData,document.getElementById("GAC_BASEVALUE_r_"+id));
+
+          for(j=0;j<possibleValuesArray.length;j++)
+          {
+          var optValue=possibleValuesArray[j];
+          var optText=possibleValuesArray[j];
+          opt=new Option(optText,optValue);
+          document.getElementById("GAC_BASEVALUE_r_"+id).options[j] = opt;
+          }
+     }
+     else
+     {
+
+         var txt = document.createElement('input');
+         txt.type = 'text';
+         txt.name = 'GAC_BASEVALUE_r_';
+         txt.id = 'GAC_BASEVALUE_r_'+id;
+         txt.onblur = function(){checkAmount(this); numFieldOnFocus(this);applyComma(this)};
+         txt.className = 'inputtext';
+         txt.style.width = '112px';
+         txt.style.textAlign = 'right';
+
+         if(document.getElementById("GAC_BASEVALUE_r_"+id).replaceNode)
+             document.getElementById("GAC_BASEVALUE_r_"+id).replaceNode(txt);
+         else
+             document.getElementById("GAC_BASEVALUE_r_"+id).parentNode.replaceChild(txt,document.getElementById("GAC_BASEVALUE_r_"+id));
+
+         document.getElementById('GAC_BASEVALUE_r_'+id).value = '<%=(session.getAttribute("GIH_SUMINSURED")==null?"":StringHandler.applyComma(session.getAttribute("GIH_SUMINSURED").toString()))%>';
+         <% if(calculationOnAAL){ %>
+         document.getElementById('GAC_BASEVALUE_r_'+id).value = '<%=(session.getAttribute("GGD_DOUBLESHIPLIMIT")==null?"":StringHandler.applyComma(session.getAttribute("GGD_DOUBLESHIPLIMIT").toString()))%>';
+         <% } %>
+
+     }
+
+
+
+
+     <%}%>
+
+
+ }
+
+
+ function filterCalculationBasis(cid)
+ {
+ 	id=cid.id;
+ 	id = id.substring(id.length-6);
+ 	l=document.getElementById('GAC_PERCENT_PERMILLI_r_'+id).options.length;
+ 	if(document.getElementById('PCY_ACTIONTYPE_r_'+id).value!='PR' && l==3)
+ 	{
+		document.getElementById('GAC_PERCENT_PERMILLI_r_'+id).options[2]=null;
+		document.getElementById('GAC_PERCENT_PERMILLI_r_'+id).options[1]=null;		
+	}
+	else
+	{
+		if(l==1)
+		{
+			opt = new Option("Permilli","M");
+			document.getElementById('GAC_PERCENT_PERMILLI_r_'+id).options[1]=opt;
+
+			opt = new Option("Rate","R");
+			document.getElementById('GAC_PERCENT_PERMILLI_r_'+id).options[2]=opt;
+
+		}
+		
+	}
+ }
+
+ 
+<% if(!deptMarine){ %>
+
+ function doCalculation(cid)
+ {
+ 
+  group_A = getTotal('A');
+  if(group_A=='' || group_A==null)
+  	group_A = 0;
+  setValues('B',group_A);  
+
+  group_B = getTotal('B');
+  if(group_B=='' || group_B==null)
+  	group_B = 0;
+  group_B = group_A - group_B;
+  
+  setValues('C',group_B);
+
+  group_C = getTotal('C');
+  if(group_C=='' || group_C==null)
+  	group_C = 0;
+  group_C = group_B - group_C;
+  setValues('D',group_C);
+  
+  group_D = getTotal('D');
+  if(group_D=='' || group_D==null)
+  	group_D = 0;
+  group_D = group_C + group_D;
+  setValues('E',group_D);
+  
+ 
+  group_E = getTotal('E');
+  if(group_E=='' || group_E==null)
+  	group_E = 0;
+  group_E = group_D + group_E;
+  setValues('F',group_E);
+ 
+  group_F = getTotal('F');
+  if(group_F=='' || group_F==null)
+   	group_F = 0;
+   group_F = group_E - group_F;
+  
+ 
+  setValues('G',group_F);
+ 
+ }
+
+ function setValues(group,sourceAmount)
+ {
+	 for(a = 0; a < 99999; a++)
+	 {
+		 id = "00000" + a;
+		 id = id.substring(id.length - 6);
+		 if(document.getElementById('POR_ORG_CODE_pk_' + id) == null)
+			 return;
+
+		 if(document.getElementById('PTF_BASEVALUETYPE' + id).value == 'null' || document.getElementById('PTF_BASEVALUETYPE' + id).value == '')
+			 document.getElementById('PTF_BASEVALUETYPE' + id).value = 'N'
+
+		 document.getElementById('GAC_BASEVALUE_r_' + id).className = 'inputtextreadonly';
+		 document.getElementById('GAC_BASEVALUE_r_' + id).readOnly = true;
+		 if(document.getElementById('PTF_BASEVALUETYPE' + id).value == 'N')
+		 {
+			 document.getElementById('GAC_BASEVALUE_r_' + id).className = 'inputtext';
+			 document.getElementById('GAC_BASEVALUE_r_' + id).readOnly = false;
+
+			 sourceAmount = document.getElementById('GAC_BASEVALUE_r_' + id).value;
+			 sourceAmount = removeChar(sourceAmount, ',');
+		 }
+		 else if(document.getElementById('PTF_BASEVALUETYPE' + id).value == 'S')
+		 {
+			 sourceAmount = document.getElementById("text55").value;
+			 sourceAmount = removeChar(sourceAmount, ',');
+			 document.getElementById('GAC_BASEVALUE_r_' + id).value = sourceAmount;
+			 setCommaInField(document.getElementById('GAC_BASEVALUE_r_' + id));
+		 }
+		 else if(document.getElementById('PTF_BASEVALUETYPE' + id).value == 'B')
+		 {
+			 sourceAmount = '<%=basicContributionAmount%>';
+			 sourceAmount = removeChar(sourceAmount, ',');
+			 document.getElementById('GAC_BASEVALUE_r_' + id).value = sourceAmount;
+			 setCommaInField(document.getElementById('GAC_BASEVALUE_r_' + id));
+		 }
+		 else
+		 {
+			 //document.getElementById('GAC_BASEVALUE_r_' + id).value = sourceAmount;
+			 //setCommaInField(document.getElementById('GAC_BASEVALUE_r_' + id));
+		 }
+
+
+
+		 if(document.getElementById('group' + id).value == group)
+		 {
+			 rate = document.getElementById('GAC_RATE_r_' + id).value;
+			 if(rate == '' || rate == null)
+				 rate = 0;
+
+			 amount = (parseFloat(sourceAmount) * parseFloat(rate)) / 100;
+			 ratePercent = document.getElementById('GAC_RATE_PERCENT_r_' + id).value;
+			 amount = (amount * ratePercent) / 100;
+			 flatAmount = document.getElementById('GAC_FLAT_AMOUNT_r_' + id).value;
+
+			 flatAmount = removeChar(flatAmount, ',');
+
+			 if(flatAmount == '' || flatAmount == null)
+				 flatAmount = 0;
+
+			 //amount = Math.round(parseFloat(amount)+parseFloat(flatAmount));
+			 amount = round(parseFloat(amount) + parseFloat(flatAmount), roundedPrecision);
+
+			 <%if(!(deptMarine && motorDept)){%>
+			 for(e = 0; e < tariffgroup.length; e++)
+			 {
+				 maxValArray = tariffgroup[e].split("~");
+				 if(maxValArray[0] == document.getElementById('GAC_ACTION_CODE_r_' + id).value)
+				 {
+					 maxAmount = maxValArray[2];
+					 if(maxAmount > 0 && amount > maxAmount)
+						 amount = maxAmount;
+
+					 break;
+				 }
+			 }
+			 <%}%>
+
+			 document.getElementById('GAC_AMOUNT_r_' + id).value = amount;
+			 setCommaInField(document.getElementById('GAC_AMOUNT_r_' + id));
+
+		 }
+	 }
+ }
+
+ totRecords = 0;
+ 
+ 
+ function getTotal(group){
+
+	total = 0;
+	for(a=0;a<(totRecords-1);a++)
+	{
+		id = "00000"+a;
+		id = id.substring(id.length-6);
+
+		if(document.getElementById('group'+id).value==group)
+		{
+			val = document.getElementById('GAC_AMOUNT_r_'+id).value;
+			val = removeChar(val,',');
+			if(val=='' || val==null)
+				val = 0;
+
+			total = total + parseFloat(val);
+		}
+	}
+
+	return total;
+ }
+<% } %>
+ function getCalculationBasis(id)
+ {
+ 	if(document.getElementById('GAC_PERCENT_PERMILLI_r_'+id).value=='M')
+		return 1000;
+	else if(document.getElementById('GAC_PERCENT_PERMILLI_r_'+id).value=='R')
+		return 1;
+	else
+		return 100;
+ }
+
+	function calculationBaseChanged(cid)
+	{
+		id = cid.id;
+		id = id.substring(id.length - 6);
+		ratelf(document.getElementById('GAC_RATE_r_' + id));
+	}
+
+	function alfocus(cid)
+	{
+		if(!(validate(cid, 'n', false)))
+		{
+			return;
+		}
+		var a = cid.id;
+		a = a.substring(a.length - 6, a.length);
+		var c = document.getElementById('GAC_AMOUNT_r_' + a).value;
+		c = removeChar(c, ',');
+		if(isNaN(c))
+			c = '0';
+		if(c == '')
+			c = '0';
+
+		var d = cid.value;
+		d = removeChar(d, ',');
+
+		if(isNaN(d))
+			d = '0';
+		if(d == '')
+			d = '0';
+
+		var a2 = "00000" + (parseFloat(a) + 1);
+		a2 = a2.substring(a2.length - 6);
+
+		if(document.getElementById('GDH_DOCUMENTNO_pk_' + a2) != null)
+			changeValue(a);
+		flatAmount = d;
+
+		document.getElementById('GAC_AMOUNT_r_' + a).value = eval(c) + parseFloat(flatAmount);
+		setCommaInField(document.getElementById('GAC_AMOUNT_r_' + a));
+
+
+		doRound('GAC_AMOUNT_r_' + a);
+		if(<%=!isHealthOnly%> && document.getElementById('GAC_AMOUNT_r_' + a).value == '0')
+			document.getElementById('GAC_AMOUNT_r_' + a).value = '';
+
+		document.getElementById('GAC_FLAT_AMOUNT_r_' + a).value = flatAmount;
+		setCommaInField(document.getElementById('GAC_FLAT_AMOUNT_r_' + a));
+	}
+
+	function flatOnFocus(cid)
+	{
+		var a = cid.id;
+		a = a.substring(a.length - 6, a.length);
+
+		numFieldOnFocus(cid);
+		if(cid.value == '')
+			cid.value = '0';
+
+		if(document.getElementById('GAC_AMOUNT_r_' + a).value != '')
+		{
+			gacAmount = document.getElementById('GAC_AMOUNT_r_' + a).value;
+			gacAmount = removeChar(gacAmount, ',');
+
+			document.getElementById('GAC_AMOUNT_r_' + a).value = eval(gacAmount) - eval(cid.value);
+			setCommaInField(document.getElementById('GAC_AMOUNT_r_' + a));
+		}
+
+		doRound('GAC_AMOUNT_r_' + a);
+		if(document.getElementById('GAC_AMOUNT_r_' + a).value == '0')
+			document.getElementById('GAC_AMOUNT_r_' + a).value = '';
+
+		if(!<%=applyRecursion%>)
+			return;
+	}
+
+	function formatMask(cid)
+	{
+		var index = cid.indexOf('.');
+		if(cid.length >= index + 4 && index != -1)
+		{
+			var str = cid.substring(0, index + 3);
+			return str;
+		}
+		return cid;
+	}
+
+	function backClicked()
+	{
+		document.myForm.control.value = 'fromothers';
+		document.myForm.action = '<%=session.getAttribute("backTo")%>';
+		document.myForm.submit();
+	}
+
+	function ratePercentChange(cid)
+	{
+		id = cid.id;
+		id = id.substring(id.length - 6);
+		if(!(validate(cid, 'n', false)))
+		{
+			cid.value = '0';
+			ratelf(document.getElementById('GAC_RATE_r_' + id));
+			return;
+		}
+
+		if(parseFloat(cid.value) < 0 || parseFloat(cid.value) > 100)
+		{
+			alert('Rate Percent Must between 1 to 100');
+			cid.value = '0';
+			ratelf(document.getElementById('GAC_RATE_r_' + id));
+			return;
+		}
+
+		ratelf(document.getElementById('GAC_RATE_r_' + id));
+	}
+
+	function calculateRatePercent(perilAmount, cid)
+	{
+		id = cid.id;
+		id = id.substring(id.length - 6);
+		ratePercent = document.getElementById('GAC_RATE_PERCENT_r_' + id).value;
+		//amount = Math.round((perilAmount*ratePercent)/100);
+		amount = round((perilAmount * ratePercent) / 100, roundedPrecision);
+
+		if(amount == 0)
+			amount = '';
+		return amount;
+	}
+
+	function numFieldOnFocus(cid)
+	{
+		cid.value = removeChar(cid.value, ',');
+	}
+
+	function applyComma(cid)
+	{
+		if(!validate(cid, 'n', false))
+		{
+			cid.value = 0;
+			return;
+		}
+
+		setCommaInField(cid);
+	}
+
+  function showMandatoryPerils()
+  {
+    var urlToPass = "../genins/ggu_te_mandatoryperils.jsp";
+    if(isIE()) {
+      var intiDTLvals = window.showModalDialog(urlToPass, 'abc', "dialogHeight: 450px; dialogWidth: 600px; dialogTop: 250px; dialogLeft: 400px; edge: Raised; center: No; help: No; resizable: No; status: No;");
+    } else {
+      clientWidth = 600;
+      clientHeight = 250;
+      $('#darkBgCustom').fadeIn('1000');
+      $('#lightBgCustom').css('top','95px');
+      $('#lightBgCustom').css('left','400px');
+      $('#lightBgCustom').css('width',clientWidth+'px');
+      $('#lightBgCustom').css('height',clientHeight+'px');
+
+      ajaxLoadPageByUrl(urlToPass, "popUpDivCustom");
+    }
+  }
+
+	function dedExcessBtnClicked(cid)
+	{
+		id = cid.id.substring(cid.id.length - 6);
+
+		<%if(isAutoDeductible == false){%>
+		if(document.getElementById('PCY_ACTIONTYPE_r_' + id).value != 'PR')
+		{
+			alert('Deductible/Excess only valid for Perils, selected row is not peril');
+			return;
+		}
+		<%}%>
+
+		document.myForm.actionSerialNo.value = document.getElementById('GAC_ACTIONSERIALNO_pk_' + id).value;
+		document.myForm.perilDesc.value = document.getElementById('GAC_ACTION_CODE_r_' + id).options[document.getElementById('GAC_ACTION_CODE_r_' + id).selectedIndex].text;
+		document.myForm.sumInsured.value = document.myForm.sum_ins.value;
+		document.myForm.action = '../genins/ggu_te_perilwise_deductible_excess.jsp';
+		document.myForm.submit();
+	}
+ </script>
+ </head> 
+ <body DIR='<%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"LANGDIR")%>' onhelp="window.event.returnValue=false" oncontextmenu="called(); return false;" onKeyDown="keyD(event)"> 
+  
+ <!-- Heading of JSP File and other header information in this Layer --> 
+  
+ <DIV id=Layer112 language=javascript style="FONT-FAMILY: Verdana; FONT-SIZE: 14px; FONT-WEIGHT: bold; HEIGHT: 420px; LEFT: 10px; OVERFLOW: auto; POSITION: absolute; TOP: 70px; VISIBILITY: hidden; WIDTH: 880px">   
+  	<h3>Request is in process!, please wait ....................</h3>
+  </div>
+
+<DIV id=Layer1 language=javascript style="FONT-FAMILY: Verdana; FONT-SIZE: xx-small; FONT-WEIGHT: bold; HEIGHT: 80px; LEFT: 10px; OVERFLOW: auto; POSITION: absolute; TOP: 0px; VISIBILITY: visible; WIDTH: 98%"> 
+  <table width="98%">
+    <tr>  
+       <td rowspan=4 valign=bottom class=heading colspan="2"><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_page_title_peril_risk")%></td> 
+     </tr> 
+    <tr> 
+      <td width="80"><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_doc_type")%></td>
+      <td width="145"><%=session.getAttribute("PDT_DESC_VAL")%></td>
+      <td width="88"><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_insu_type")%></td>
+      <td width="182" ><%=session.getAttribute("PIY_DESC_VAL")%></td>
+    </tr>
+    <tr> 
+      <td width="80"><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_doc_no")%></td>
+      <td width="145"><%=session.getAttribute("GDH_DOC_REFERENCE_NO")%></td>
+      <td width="88"><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_bus_class")%></td>
+      <td width="182" ><%=obj_DocumentHeaderBean.getBusinessClassDescription()%></td>
+
+    </tr>
+  </table> 
+ <hr color=gray>  
+ </DIV>  
+ <Script Language="JavaScript"> 
+ <% 
+ //***************************************** error message ***************************************** 
+ 	if (request.getAttribute("AltMessage")!=null)
+ 		out.println("alert('"+((String)request.getAttribute("AltMessage")).trim()+"');");
+
+	if (request.getAttribute("DetailMessage")!=null)
+ 		out.println("alert('"+((String)request.getAttribute("DetailMessage")).trim()+"');");
+ //***************************************** error message ***************************************** 
+ %> 
+ </Script> 
+  
+ <!-- This table contains List of existing records. (History) --> 
+ <DIV id=Layer11 language=javascript style="FONT-FAMILY: Verdana; FONT-SIZE: xx-small; FONT-WEIGHT: bold; HEIGHT: 80%; LEFT: 5px; OVERFLOW: auto; POSITION: absolute; TOP: 70px; VISIBILITY: visible; WIDTH: 98%">   
+ <form name=myForm action="../servlet/dbmanlib.DetailSaveGISN" method="post">
+
+ <table> 
+  <tr>
+  <td><b><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_item_no")%></b></td> 
+  <td> 
+	<input class=inputtextreadonly readonly type=text name="item_no" 	<%=session.getAttribute("GIH_ITEMNO")==null?"":"value='"+(session.getAttribute("GIH_ITEMNO")+"'")%> maxlength="15" 	size="15" id="text44" style="TEXT-ALIGN: left" > 
+  </td> 
+
+  <%
+	String totalLimit = geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_tot_lim");
+	String sumInsu = geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_sum_insu");
+  %>
+
+  <%-- GH-741 #6: FC Amount / Currency Rate - item-level (not per-peril), so shown once here
+       instead of as a grid column. Read-only, sourced from session (same as sum_ins/text55
+       below), no separate DB binding needed. --%>
+  <% if(isTravelItemBClass){ %>
+  <td><b><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"itemwiseentry_grid_title_fc_si")%></b></td>
+  <td>
+	<input class=inputtextreadonly readonly type=text name="fc_amount" <%=session.getAttribute("GIH_FOREIGNCURRENCY_SI")==null?"":"value='"+(StringHandler.applyComma(session.getAttribute("GIH_FOREIGNCURRENCY_SI").toString())+"'")%> maxlength="13" size="13" id="textFcAmount" style="TEXT-ALIGN: right" >
+  </td>
+  <td><b><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"itemwiseentry_grid_title_exch_rate")%></b></td>
+  <td>
+	<input class=inputtextreadonly readonly type=text name="currency_rate" <%=session.getAttribute("GIH_EXCHANGE_RATE_SI")==null?"":"value='"+(session.getAttribute("GIH_EXCHANGE_RATE_SI")+"'")%> maxlength="10" size="10" id="textCurrencyRate" style="TEXT-ALIGN: right" >
+  </td>
+  <% } %>
+
+  <td><b><%=healthDept?totalLimit:sumInsu%></b></td>
+  <td> 
+<% if(calculationOnAAL){ %>
+	<input class=inputtextreadonly readonly  type=text name="sum_ins" 	<%=session.getAttribute("GGD_DOUBLESHIPLIMIT")==null?"":"value='"+(StringHandler.applyComma(session.getAttribute("GGD_DOUBLESHIPLIMIT").toString())+"'")%> maxlength="15" 	size="15" id="text55" style="TEXT-ALIGN: right" >
+<% } else { %>
+	<input class=inputtextreadonly readonly  type=text name="sum_ins" 	<%=session.getAttribute("GIH_SUMINSURED")==null?"":"value='"+(StringHandler.applyComma(session.getAttribute("GIH_SUMINSURED").toString())+"'")%> maxlength="15" 	size="15" id="text55" style="TEXT-ALIGN: right" > 
+<% } %>
+  </td>
+
+		<%
+			if(obj_DocumentHeaderBean.isRecordExists())
+			{
+				//session.setAttribute("GDH_GROSSPREMIUM", obj_DocumentHeaderBean.getGrossPremium());
+				session.setAttribute("GDH_GROSSPREMIUM", BigDecimal.valueOf(obj_DocumentHeaderBean.getGrossPremium()).toPlainString());
+				session.setAttribute("GDH_POLICYCHARGES", obj_DocumentHeaderBean.getCharges());
+				//session.setAttribute("GDH_NETPREMIUM", obj_DocumentHeaderBean.getNetPremium());
+				session.setAttribute("GDH_NETPREMIUM", BigDecimal.valueOf(obj_DocumentHeaderBean.getNetPremium()).toPlainString());
+			}
+		%>
+
+		<td><b><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_gross_premium")%></b></td>
+		<td>
+			<input class=inputtextreadonly style="TEXT-ALIGN: right" readonly type=text name="gross_premium" 	<%=session.getAttribute("GDH_GROSSPREMIUM")==null?"":"value='"+(session.getAttribute("GDH_GROSSPREMIUM")+"'")%> maxlength="15" 	size="15" id="gross_premium" style="TEXT-ALIGN: left" >
+		</td>
+
+		<td><b><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_policy_charges")%></b></td>
+		<td>
+			<input class=inputtextreadonly style="TEXT-ALIGN: right" readonly type=text name="policy_charges" 	<%=session.getAttribute("GDH_POLICYCHARGES")==null?"":"value='"+(session.getAttribute("GDH_POLICYCHARGES")+"'")%> maxlength="15" 	size="15" id="policy_charges" style="TEXT-ALIGN: left" >
+		</td>
+
+		<td><b><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_net_premium")%></b></td>
+		<td>
+			<input class=inputtextreadonly style="TEXT-ALIGN: right" readonly type=text name="net_premium" 	<%=session.getAttribute("GDH_NETPREMIUM")==null?"":"value='"+(session.getAttribute("GDH_NETPREMIUM")+"'")%> maxlength="15" 	size="15" id="net_premium" style="TEXT-ALIGN: left" >
+		</td>
+
+
+  <td><b><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_pol_type")%></b></td> 
+  <td> 
+	<input class=inputtextreadonly readonly type=text name="policy_type" 	<%=session.getAttribute("GDH_POLICYTYPE")==null?"":"value='"+(session.getAttribute("GDH_POLICYTYPE")+"'")%> maxlength="15" 	size="15" id="text66" style="TEXT-ALIGN: left" > 
+  </td>
+    <td>
+		<%if(mandatoryPerilfound){%>
+		<input type=button class=sbttn name=MandatoryPerils value="Mandatory Perils" onclick="showMandatoryPerils()">
+		<%}%>
+    </td>
+  </tr> 
+ </table> 
+<script language=javascript>
+	if(document.getElementById('text66').value=='A')
+		document.getElementById('text66').value='Annual';
+
+	else if(document.getElementById('text66').value=='S')
+		document.getElementById('text66').value='Short Period';
+
+	else if(document.getElementById('text66').value=='P')
+		document.getElementById('text66').value='Pro-rata';
+
+	else if(document.getElementById('text66').value=='N')
+		document.getElementById('text66').value='Normal';
+
+</script>
+ <%
+	// GH-741 #5: doc-key condition shared by the main WHERE and the GI_GU_IH_ITEM_HEADER
+	// subquery below - avoids restructuring the FROM clause into a literal join, which would
+	// make every doc-key column ambiguous (they exist on both tables).
+	String itemHeaderCond = new StringBuffer(obj_DocumentHeaderBean.getWhereCondition())
+	.append(" AND GIH_ITEMNO='")
+	.append(session.getAttribute("GIH_ITEMNO"))
+	.append("'").toString();
+
+	StringBuffer queryEI= new StringBuffer(obj_DocumentHeaderBean.getWhereCondition())
+	.append(" AND GIH_ITEMNO='")
+	.append(session.getAttribute("GIH_ITEMNO"))
+	.append("' AND PCY_ACTIONTYPE in('PR','EX','OX','VE','IN','OT','O2','O3')");
+	// Premium action row (0001) only shows for the Self member's item - hidden for
+	// Spouse/Child items.
+	if(isTravelItemBClass || isTravelDept){
+	queryEI.append(" AND NOT (GAC_ACTION_CODE='0001' AND (SELECT PRL_CODE FROM GI_GU_IH_ITEM_HEADER ")
+	.append(itemHeaderCond)
+	.append(") <> '")
+	.append(application.getAttribute("CNTRL_RELATIONSELF"))
+	.append("')");
+	}
+	queryEI.append(" ORDER BY GAC_ACTIONTAG,GAC_ACTIONSERIALNO ");
+
+	query=new StringBuffer("select max(gac_actionserialno) from gi_gu_ac_actiondtl ")
+	.append(obj_DocumentHeaderBean.getWhereCondition())
+	.append(" AND GIH_ITEMNO='")
+	.append(session.getAttribute("GIH_ITEMNO"))
+	.append("'").toString();
+
+	ResultSet rs = null;
+	try
+	{
+		rs = md.executeQuery(query);
+		tempPerils = "1";
+		while(rs.next())
+		{
+			if(rs.getString(1)!=null)
+			{
+				int val = Integer.parseInt(rs.getString(1))+1;
+				tempPerils = ""+val;		
+			}
+		}
+	}
+	catch(Exception e)
+	{
+		System.out.println("Error in max condition "+e.getMessage());
+		e.printStackTrace();
+	}
+	finally
+	{
+		md.closeResultSet(rs);
+	}
+// serialno query for Exclusions
+	/*query=new StringBuffer("select max(gac_actionserialno)from gi_gu_ac_actiondtl WHERE POR_ORG_CODE='")
+	.append(session.getAttribute("POR_ORG_CODE"))
+	.append("' AND PLC_LOC_CODE='")
+	.append(session.getAttribute("PLC_LOC_CODE"))
+	.append("' AND PDP_DEPT_CODE='")
+	.append(session.getAttribute("PDP_DEPT_CODE"))
+	.append("' AND PBC_BUSICLASS_CODE='")
+	.append(session.getAttribute("PBC_BUSICLASS_CODE"))
+	.append("' AND GDH_YEAR='")
+	.append(session.getAttribute("GDH_YEAR"))
+	.append("' AND PIY_INSUTYPE='")
+	.append(session.getAttribute("PIY_INSUTYPE"))
+	.append("' AND PDT_DOCTYPE='")
+	.append(session.getAttribute("PDT_DOCTYPE"))
+	.append("' AND GDH_DOCUMENTNO='")
+	.append(session.getAttribute("GDH_DOCUMENTNO"))
+	.append("' AND GDH_RECORD_TYPE='")
+	.append(session.getAttribute("GDH_RECORD_TYPE"))
+	.append("' AND GAC_ACTIONTAG<7.2 AND GIH_ITEMNO='")
+	.append(session.getAttribute("GIH_ITEMNO"))
+	.append("'").toString();
+	try
+	{
+		rs = md.executeQuery(query);
+		tempExclusions = "document.getElementById('GAC_ACTIONSERIALNO_pk_000000').value = '1'";
+		while(rs.next())
+		{
+			if(rs.getString(1)!=null)
+			{
+				int val = Integer.parseInt(rs.getString(1))+1;
+				tempExclusions = "'"+val+"'";
+			}
+		}
+	}
+	finally
+	{
+		md.closeResultSet(rs);
+	}*/
+	tempExclusions = tempPerils;
+
+// serialno query for Voluntary Excess
+	/*query=new StringBuffer("select max(gac_actionserialno)from gi_gu_ac_actiondtl WHERE POR_ORG_CODE='")
+	.append(session.getAttribute("POR_ORG_CODE"))
+	.append("' AND PLC_LOC_CODE='")
+	.append(session.getAttribute("PLC_LOC_CODE"))
+	.append("' AND PDP_DEPT_CODE='")
+	.append(session.getAttribute("PDP_DEPT_CODE"))
+	.append("' AND PBC_BUSICLASS_CODE='")
+	.append(session.getAttribute("PBC_BUSICLASS_CODE"))
+	.append("' AND GDH_YEAR='")
+	.append(session.getAttribute("GDH_YEAR"))
+	.append("' AND PIY_INSUTYPE='")
+	.append(session.getAttribute("PIY_INSUTYPE"))
+	.append("' AND PDT_DOCTYPE='")
+	.append(session.getAttribute("PDT_DOCTYPE"))
+	.append("' AND GDH_DOCUMENTNO='")
+	.append(session.getAttribute("GDH_DOCUMENTNO"))
+	.append("' AND GDH_RECORD_TYPE='")
+	.append(session.getAttribute("GDH_RECORD_TYPE"))
+	.append("' AND GAC_ACTIONTAG<7.4 AND GIH_ITEMNO='")
+	.append(session.getAttribute("GIH_ITEMNO"))
+	.append("'").toString();
+	try
+	{
+		rs = md.executeQuery(query);
+		tempVoluntaryExcess = "document.getElementById('GAC_ACTIONSERIALNO_pk_000000').value = '1'";
+		while(rs.next())
+		{
+			if(rs.getString(1)!=null)
+			{
+				int val = Integer.parseInt(rs.getString(1))+1;
+				tempVoluntaryExcess = "'"+val+"'";
+			}
+		}
+	}	
+	finally
+	{
+		md.closeResultSet(rs);
+	}*/
+	tempVoluntaryExcess = tempPerils;
+// serialno query for Inclusions
+	/*query=new StringBuffer("select max(gac_actionserialno)from gi_gu_ac_actiondtl WHERE POR_ORG_CODE='")
+	.append(session.getAttribute("POR_ORG_CODE"))
+	.append("' AND PLC_LOC_CODE='")
+	.append(session.getAttribute("PLC_LOC_CODE"))
+	.append("' AND PDP_DEPT_CODE='")
+	.append(session.getAttribute("PDP_DEPT_CODE"))
+	.append("' AND PBC_BUSICLASS_CODE='")
+	.append(session.getAttribute("PBC_BUSICLASS_CODE"))
+	.append("' AND GDH_YEAR='")
+	.append(session.getAttribute("GDH_YEAR"))
+	.append("' AND PIY_INSUTYPE='")
+	.append(session.getAttribute("PIY_INSUTYPE"))
+	.append("' AND PDT_DOCTYPE='")
+	.append(session.getAttribute("PDT_DOCTYPE"))
+	.append("' AND GDH_DOCUMENTNO='")
+	.append(session.getAttribute("GDH_DOCUMENTNO"))
+	.append("' AND GDH_RECORD_TYPE='")
+	.append(session.getAttribute("GDH_RECORD_TYPE"))
+	.append("' AND GAC_ACTIONTAG<7.6 AND GIH_ITEMNO='")
+	.append(session.getAttribute("GIH_ITEMNO"))
+	.append("'").toString();
+	try
+	{
+		rs = md.executeQuery(query);
+		tempInclusions = "document.getElementById('GAC_ACTIONSERIALNO_pk_000000').value = '1'";
+		while(rs.next())
+		{
+			if(rs.getString(1)!=null)
+			{
+				int val = Integer.parseInt(rs.getString(1))+1;
+				tempInclusions = "'"+val+"'";
+			}
+		}
+	}
+	finally
+	{
+		md.closeResultSet(rs);
+	}*/
+	 tempInclusions = tempPerils;
+// serialno query for Others
+	/*query=new StringBuffer("select max(gac_actionserialno)from gi_gu_ac_actiondtl WHERE POR_ORG_CODE='")
+	.append(session.getAttribute("POR_ORG_CODE"))
+	.append("' AND PLC_LOC_CODE='")
+	.append(session.getAttribute("PLC_LOC_CODE"))
+	.append("' AND PDP_DEPT_CODE='")
+	.append(session.getAttribute("PDP_DEPT_CODE"))
+	.append("' AND PBC_BUSICLASS_CODE='")
+	.append(session.getAttribute("PBC_BUSICLASS_CODE"))
+	.append("' AND GDH_YEAR='")
+	.append(session.getAttribute("GDH_YEAR"))
+	.append("' AND PIY_INSUTYPE='")
+	.append(session.getAttribute("PIY_INSUTYPE"))
+	.append("' AND PDT_DOCTYPE='")
+	.append(session.getAttribute("PDT_DOCTYPE"))
+	.append("' AND GDH_DOCUMENTNO='")
+	.append(session.getAttribute("GDH_DOCUMENTNO"))
+	.append("' AND GDH_RECORD_TYPE='")
+	.append(session.getAttribute("GDH_RECORD_TYPE"))
+	.append("' AND GAC_ACTIONTAG<7.8 AND GIH_ITEMNO='")
+	.append(session.getAttribute("GIH_ITEMNO"))
+	.append("'").toString();
+
+	try
+	{
+		rs = md.executeQuery(query);
+		tempOthers = "document.getElementById('GAC_ACTIONSERIALNO_pk_000000').value = '1'";
+		while(rs.next())
+		{
+			if(rs.getString(1)!=null)
+			{
+				int val = Integer.parseInt(rs.getString(1))+1;
+				tempOthers = "'"+val+"'";
+			}
+		}
+	}
+	finally
+	{
+		md.closeResultSet(rs);
+	}*/
+	tempOthers = tempPerils;
+// serialno query for Other2
+	/*query=new StringBuffer("select max(gac_actionserialno)from gi_gu_ac_actiondtl WHERE POR_ORG_CODE='")
+	.append(session.getAttribute("POR_ORG_CODE"))
+	.append("' AND PLC_LOC_CODE='")
+	.append(session.getAttribute("PLC_LOC_CODE"))
+	.append("' AND PDP_DEPT_CODE='")
+	.append(session.getAttribute("PDP_DEPT_CODE"))
+	.append("' AND PBC_BUSICLASS_CODE='")
+	.append(session.getAttribute("PBC_BUSICLASS_CODE"))
+	.append("' AND GDH_YEAR='")
+	.append(session.getAttribute("GDH_YEAR"))
+	.append("' AND PIY_INSUTYPE='")
+	.append(session.getAttribute("PIY_INSUTYPE"))
+	.append("' AND PDT_DOCTYPE='")
+	.append(session.getAttribute("PDT_DOCTYPE"))
+	.append("' AND GDH_DOCUMENTNO='")
+	.append(session.getAttribute("GDH_DOCUMENTNO"))
+	.append("' AND GDH_RECORD_TYPE='")
+	.append(session.getAttribute("GDH_RECORD_TYPE"))
+	.append("' AND GAC_ACTIONTAG<=7.9 AND GIH_ITEMNO='")
+	.append(session.getAttribute("GIH_ITEMNO"))
+	.append("'").toString();
+
+	try
+	{
+		rs = md.executeQuery(query);
+		tempOther2 = "document.getElementById('GAC_ACTIONSERIALNO_pk_000000').value = '1'";
+		while(rs.next())
+		{
+			if(rs.getString(1)!=null)
+			{
+				int val = Integer.parseInt(rs.getString(1))+1;
+				tempOther2 = "'"+val+"'";
+			}
+		}
+	}
+	finally
+	{
+		md.closeResultSet(rs);
+	}*/
+	tempOther2 = tempPerils;
+
+// serialno query for Other3
+	/*query=new StringBuffer("select max(gac_actionserialno)from gi_gu_ac_actiondtl WHERE POR_ORG_CODE='")
+	.append(session.getAttribute("POR_ORG_CODE"))
+	.append("' AND PLC_LOC_CODE='")
+	.append(session.getAttribute("PLC_LOC_CODE"))
+	.append("' AND PDP_DEPT_CODE='")
+	.append(session.getAttribute("PDP_DEPT_CODE"))
+	.append("' AND PBC_BUSICLASS_CODE='")
+	.append(session.getAttribute("PBC_BUSICLASS_CODE"))
+	.append("' AND GDH_YEAR='")
+	.append(session.getAttribute("GDH_YEAR"))
+	.append("' AND PIY_INSUTYPE='")
+	.append(session.getAttribute("PIY_INSUTYPE"))
+	.append("' AND PDT_DOCTYPE='")
+	.append(session.getAttribute("PDT_DOCTYPE"))
+	.append("' AND GDH_DOCUMENTNO='")
+	.append(session.getAttribute("GDH_DOCUMENTNO"))
+	.append("' AND GDH_RECORD_TYPE='")
+	.append(session.getAttribute("GDH_RECORD_TYPE"))
+	.append("' AND GAC_ACTIONTAG<=7.92 AND GIH_ITEMNO='")
+	.append(session.getAttribute("GIH_ITEMNO"))
+	.append("'").toString();
+	try
+	{
+		rs = md.executeQuery(query);
+		tempOther3 = "document.getElementById('GAC_ACTIONSERIALNO_pk_000000').value = '1'";
+		while(rs.next())
+		{
+			if(rs.getString(1)!=null)
+			{
+				int val = Integer.parseInt(rs.getString(1))+1;
+				tempOther3 = "'"+val+"'";
+			}
+		}
+	}
+	finally
+	{
+		md.closeResultSet(rs);
+	}*/
+
+	tempOther3 = tempPerils;
+	tempOther4= tempPerils;
+ %>
+ <%@ taglib uri="/WEB-INF/tlds/my-tag.tld" prefix="abc" %>
+ <abc:tablegrid dateformat="dd/mm/yyyy" queryextrainfo="<%=queryEI.toString()%>" border="0" tablename='<%=secmanlib.common.SimpleCryptor.encrypt("GI_GU_AC_ACTIONDTL")%>' styleoffirstrow="firstrowstyle" styleofcolumns="columnstyle" styleofnewcolumns="newcolumnstyle">
+ <field>
+	<name>POR_ORG_CODE_pk_</name>
+	<type>hidden</type>
+	<value><%=(String)session.getAttribute("POR_ORG_CODE")%></value>
+</field>
+<field>
+	<name>PLC_LOC_CODE_pk_</name>
+	<type>hidden</type>
+	<value><%=(String)session.getAttribute("PLC_LOC_CODE")%></value>
+</field>
+<field>
+	<name>PDP_DEPT_CODE_pk_</name>
+	<type>hidden</type>
+	<value><%=(String)session.getAttribute("PDP_DEPT_CODE")%></value>
+</field>
+<field>
+	<name>PBC_BUSICLASS_CODE_pk_</name>
+	<type>hidden</type>
+	<value><%=(String)session.getAttribute("PBC_BUSICLASS_CODE")%></value>
+</field>
+<field>
+	<name>PIY_INSUTYPE_pk_</name>
+	<type>hidden</type>
+	<value><%=(String)session.getAttribute("PIY_INSUTYPE")%></value>
+</field>
+<field>
+	<name>PDT_DOCTYPE_pk_</name>
+	<type>hidden</type>
+	<value><%=(String)session.getAttribute("PDT_DOCTYPE")%></value>
+</field>
+<field>
+	<name>GDH_DOCUMENTNO_pk_</name>
+	<type>hidden</type>
+	<value><%=(String)session.getAttribute("GDH_DOCUMENTNO")%></value>
+</field>
+<field>
+	<name>GDH_RECORD_TYPE_pk_</name>
+	<type>hidden</type>
+	<value><%=(String)session.getAttribute("GDH_RECORD_TYPE")%></value>
+</field>
+<field>
+	<name>GDH_YEAR_pk_</name>
+	<type>hidden</type>
+	<value><%=(String)session.getAttribute("GDH_YEAR")%></value>
+</field>
+
+
+<field>
+	<name>GIH_ITEMNO_pk_</name>
+	<type>hidden</type>
+	<value><%=(String)session.getAttribute("GIH_ITEMNO")%></value>
+</field>
+<field>
+	<name>PCY_ACTIONTYPE_r_</name>
+	<type>hidden</type>
+	<value><%=session.getAttribute("PCY_ACTIONTYPE")%></value>
+</field>
+<field>
+	<name>GAC_ACTIONTAG_r_</name>
+	<type>hidden</type>
+	<value>6</value>
+</field>
+<field>
+	<name>GAC_ACTIONSERIALNO</name>
+	<title><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_grid_title_s_no")%></title>
+	<type>serialno</type>
+	<style> MaxLength=5  Size=5</style>
+</field>
+<field>
+	<name>productarray</name>
+	<type>arraydata</type>
+	<tablename>gi_gu_pp_product_policy</tablename>
+	<tablefieldname>ppa_allowable</tablefieldname>
+	<queryextrainfo><%=obj_DocumentHeaderBean.getWhereCondition()%> and ppr_prod_code='<%=session.getAttribute("PPR_PROD_CODE")%>' and ppa_allowabletype='P'</queryextrainfo>
+	<distinct>yes</distinct>
+</field>
+
+     <%
+     String str_LocCond = getPerilComboLocCondition(md,session,application);
+StringBuffer sb_PerCond = new StringBuffer(" where por_org_code='");
+sb_PerCond.append((String)session.getAttribute("POR_ORG_CODE"));
+sb_PerCond.append("' AND ");
+sb_PerCond.append(str_LocCond);
+sb_PerCond.append(" and pdp_dept_code='");
+sb_PerCond.append((String)session.getAttribute("PDP_DEPT_CODE"));
+sb_PerCond.append("' and ");
+sb_PerCond.append(QueryMaster.substring("pbc_busiclass_code",1,3));
+sb_PerCond.append("='");
+sb_PerCond.append(bc)
+.append("' ");
+
+     //String wherCondTarrif = "WHERE POR_ORG_CODE ='"+session.getAttribute("POR_ORG_CODE")+"' AND PLC_LOC_CODE= '"+session.getAttribute("PLC_LOC_CODE")+"' AND PDP_DEPT_CODE = '"+ session.getAttribute("PDP_DEPT_CODE")+"' and PBC_BUSICLASS_CODE='"+ session.getAttribute("PBC_BUSICLASS_CODE") + "'";
+     String wherCondTarrif = "WHERE POR_ORG_CODE ='"+session.getAttribute("POR_ORG_CODE")+"' AND "+str_LocCond+" AND PDP_DEPT_CODE = '"+ session.getAttribute("PDP_DEPT_CODE")+"' and PBC_BUSICLASS_CODE=" + QueryMaster.substring("'"+ session.getAttribute("PBC_BUSICLASS_CODE")+"'",1,3) + " " ;
+
+
+     if(healthDept)
+     {
+         wherCondTarrif =  sb_PerCond.toString();
+     }%>
+<field>
+	<name>tariffarray</name>
+	<type>arraydata</type>
+	<tablename>pr_gg_tf_tariff</tablename>
+	<tablefieldname><%=QueryMaster.concat(new String[]{"PTF_TARIFFCODE","'~'","PTF_APPROPDESC"})%></tablefieldname>
+	<queryextrainfo><%=wherCondTarrif%></queryextrainfo>
+</field> 
+
+<% 
+	if(healthDept)
+	{
+		StringBuffer sb_Where = new StringBuffer(obj_DocumentHeaderBean.getWhereCondition("a"))
+		.append(" AND b.GIH_ITEMNO='")
+		.append(session.getAttribute("GIH_ITEMNO"))
+		
+	    	.append("' and e.por_org_code=b.por_org_code and e.plc_loc_code=b.plc_loc_code and e.pdp_dept_code=b.pdp_dept_code and ")
+	    	.append(" e.pbc_busiclass_code=b.pbc_busiclass_code and e.piy_insutype=b.piy_insutype and e.pdt_doctype=b.pdt_doctype and ")
+	    	.append(" e.gdh_documentno=b.gdh_documentno and e.gdh_record_type=b.gdh_record_type and e.gdh_year=b.gdh_year ")
+
+	    	.append(" and e.por_org_code=d.por_org_code and e.plc_loc_code=d.plc_loc_code and e.pdp_dept_code=d.pdp_dept_code and ")
+	    	.append(" e.pbc_busiclass_code=d.pbc_busiclass_code and e.piy_insutype=d.piy_insutype and e.pdt_doctype=d.pdt_doctype and ")
+	    	.append(" e.gdh_documentno=d.gdh_documentno and e.gdh_record_type=d.gdh_record_type and e.gdh_year=d.gdh_year ")
+
+	    	.append(" and a.por_org_code=d.por_org_code and a.plc_loc_code=d.plc_loc_code and a.pdp_dept_code=d.pdp_dept_code and ")
+	    	.append(" a.pbc_busiclass_code=d.pbc_busiclass_code and a.piy_insutype=d.piy_insutype and a.pdt_doctype=d.pdt_doctype and ")
+	    	.append(" a.gdh_documentno=d.gdh_documentno and a.gdh_record_type=d.gdh_record_type and a.gdh_year=d.gdh_year ")
+	    	
+	    	.append(" and a.por_org_code=c.por_org_code and c.")
+	    	.append(getTariffLocCondition(md,session,application))
+	    	.append(" and a.pdp_dept_code=c.pdp_dept_code and ")
+	    	.append(QueryMaster.substring("a.PBC_BUSICLASS_CODE",1,3))
+	    	.append("=c.pbc_busiclass_code ")
+		.append(" and d.GPP_SERIALNO=a.GPP_SERIALNO and b.hmb_code=e.hmb_code and e.ppl_code=d.PPA_ALLOWABLE and d.PPA_ALLOWABLETYPE='P' and a.pcv_code=c.pcv_code ");
+		
+	
+%>
+
+<field>
+	<name>healthperilarray</name>
+	<type>arraydata</type>
+	<tablename>HI_HU_PC_PRODPOLICY_COVERDTL a,GI_GU_IH_ITEM_HEADER b,PR_HI_CT_COVERTARIFF_MAPPING c,GI_GU_PP_PRODUCT_POLICY d,HI_HU_MB_MEMBERINFO e</tablename>
+	<tablefieldname>distinct <%=QueryMaster.concat(new String[]{"c.ptf_tariffcode","'~'",QueryMaster.convertNumberToString("a.HPC_LIMIT")})%></tablefieldname>
+	<queryextrainfo><%=sb_Where.toString()%></queryextrainfo>
+</field>
+
+
+<%
+	}
+	
+	if(!deptMarine)
+	{
+	
+		String str_TariffLocCond=getTariffLocCondition(md,session,application);
+		StringBuffer sb_Cond = new StringBuffer("WHERE POR_ORG_CODE='");
+		sb_Cond.append((String)session.getAttribute("POR_ORG_CODE"));
+		sb_Cond.append("' AND ");
+		sb_Cond.append(str_TariffLocCond);
+		sb_Cond.append(" AND PDP_DEPT_CODE='");
+		sb_Cond.append((String)session.getAttribute("PDP_DEPT_CODE"));
+		sb_Cond.append("' and PBC_BUSICLASS_CODE='");
+		sb_Cond.append(((String)session.getAttribute("PBC_BUSICLASS_CODE")).substring(0,count));
+		sb_Cond.append("'");
+
+%>
+
+<field>
+	<name>tariffgroup</name>
+	<type>arraydata</type>
+	<tablename>pr_gg_tf_tariff</tablename>
+	<tablefieldname><%=QueryMaster.concat(new String[]{"PTF_TARIFFCODE","'~'","PTF_GROUP","'~'",QueryMaster.convertNumberToString(QueryMaster.checkNull("PTF_MAXAMOUNT","0")),"'~'",QueryMaster.checkNull("PTF_BASEVALUETYPE","'N'"),"'~'",QueryMaster.checkNull("PTF_POSSIBLE_VALUES","''"),"'~'",QueryMaster.convertNumberToString(QueryMaster.checkNull("PTF_FLATPREMIUM", "0"))})%></tablefieldname>
+	<queryextrainfo><%=sb_Cond.toString()%></queryextrainfo>
+</field>
+
+<field>
+	<name>group</name>
+	<type>hidden</type>
+</field>
+<field>
+ <name>PTF_BASEVALUETYPE</name>
+ <type>hidden</type>
+</field>
+
+<% 
+	} 
+
+	if(sectionAllowed)
+	{
+%>	
+
+<field>
+	<name>PSC_CODE_r_</name>
+	<title><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_grid_title_sec")%></title>
+	<type>dropdowndescriptionfromothertable</type>
+	<tablename>PR_GG_SC_SECTION_SETUP</tablename>
+	<tablefieldname>PSC_CODE</tablefieldname>
+	<destinationfieldname>PSC_DESC</destinationfieldname>
+	<currenttablefieldname>PSC_CODE</currenttablefieldname>
+	<applyalias>no</applyalias>
+	<queryextrainfo>WHERE PSC_TYPE='D' ORDER BY PSC_CODE</queryextrainfo>
+	<firstblank>yes</firstblank>
+	<disabled>yes</disabled>
+ 	<style>style="width:200px"</style>
+</field>
+
+	
+<%	
+	}
+
+
+
+StringBuffer busiClassMapquery = new StringBuffer(" Select PTF_TARIFFCODE FROM PR_GG_PB_PERIL_BUS_CLASS_MAP ")
+.append(" where por_org_code='");
+busiClassMapquery.append((String)session.getAttribute("POR_ORG_CODE"));
+busiClassMapquery.append("' AND ");
+busiClassMapquery.append(str_LocCond);
+busiClassMapquery.append(" and pdp_dept_code='");
+busiClassMapquery.append((String)session.getAttribute("PDP_DEPT_CODE"));
+busiClassMapquery.append("' and ");
+busiClassMapquery.append("pbc_busiclass_code_detail");
+busiClassMapquery.append("='");
+busiClassMapquery.append(session.getAttribute("PBC_BUSICLASS_CODE"))
+.append("' ");
+		ResultSet busiClassrs = null;
+		Vector v = new Vector();
+		try
+		{
+			busiClassrs = md.executeQuery(busiClassMapquery.toString());
+			while(busiClassrs.next())
+			{
+				v.add(busiClassrs.getString(1));
+			}
+		}
+		finally
+		{
+			md.closeResultSet(busiClassrs);
+		}
+
+
+		if(v.size()>0)
+		{
+			sb_PerCond.append(" AND PTF_TARIFFCODE IN (");
+			for(int i=0;i<v.size();i++)
+			{
+				if(i>0)
+					sb_PerCond.append(",");
+				sb_PerCond.append("'")
+				.append(v.get(i))
+				.append("'");
+			}
+			sb_PerCond.append(") ");
+
+		}
+
+sb_PerCond.append(" order by ptf_group,PTF_APPROPDESC");
+%>
+
+<field>
+	<name>GAC_ACTION_CODE_r_</name>
+	<title><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_grid_title_peril")%></title>
+	<type>dropdownlinked</type>
+	<tablename>PR_GG_TF_TARIFF</tablename>
+	<tablefieldname>PTF_TARIFFCODE</tablefieldname>
+	<destinationfieldname>PTF_RATE,PTF_RATE_MARRIED</destinationfieldname>
+	<displayfieldname>PTF_APPROPDESC</displayfieldname>
+	<currenttablefieldname>GAC_ACTION_CODE</currenttablefieldname>
+	<prefertable>yes</prefertable>
+	<prefertablefieldname>GAC_RATE</prefertablefieldname>
+	<queryextrainfo><%=sb_PerCond.toString()%></queryextrainfo>
+	<linkedobjectname>GAC_RATE_r_</linkedobjectname>
+	<disabled>yes</disabled>
+	<firstblank>yes</firstblank>
+<% if(!deptMarine){ %>
+	<events>onchange=DropDownConv(this);setGroup(this);filterCalculationBasis(this);</events>
+<% }else{ %>
+	<events>onchange=filterCalculationBasis(this)</events>
+<% } %>
+	<style>style="width:270"</style>
+</field>
+
+<% if(isSlientProvisionAllowed){%>
+<field>
+	<name>GAC_SWPERIOD_TYPE_r_</name>
+	<title><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_grid_title_period")%></title>
+	<type>fixeddropdown</type>
+	<tablename>GI_GU_AC_ACTIONDTL</tablename>
+	<tablefieldname>GAC_SWPERIOD_TYPE</tablefieldname>
+	<value>DP|Document Period,WP|Working Period,SP|Silent Period</value>
+	<currenttablefieldname>GAC_SWPERIOD_TYPE</currenttablefieldname>
+	<style>style="font-family: verdana"</style>
+	<events>onchange=ratelf2(this)</events>
+</field>
+<%}%>
+
+<% if(isHealthOnly){ %>
+<field>
+	<name>GAC_NONPANEL_LIMIT_r_</name>
+	<title><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_grid_title_non_panel_lim")%></title>
+	<type>text</type>
+	<tablename>GI_GU_AC_ACTIONDTL</tablename>
+	<tablefieldname>GAC_NONPANEL_LIMIT</tablefieldname>
+	<style>  MaxLength=12  Size=12 style="text-align:right"</style>
+	<events>onblur=checkAmount(this) onfocus=numFieldOnFocus(this) </events>
+	<applycomma>true</applycomma>
+</field>
+<% } %>
+
+<%
+	String limits = geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_grid_title_lim");
+	String sumInsuLimit = geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_grid_title_sumInsu_limit_idemn");
+	String baseVal = geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_grid_title_base_val");
+%>
+
+
+<field>
+	<name>GAC_BASEVALUE_r_</name>
+	<% if(isHealthOnly){ %>
+	<title><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_grid_title_panel_gen_lim")%></title>
+	<% }else{ %>
+	<title><%=healthDept?limits:sectionAllowed?sumInsuLimit:baseVal%></title>
+	<% } %>
+	<type>text</type>
+	<tablename>GI_GU_AC_ACTIONDTL</tablename>
+	<tablefieldname>GAC_BASEVALUE</tablefieldname>
+	<style>  MaxLength=12  Size=12 style="text-align:right" readOnly </style>
+	<events>onblur=checkAmount(this) onfocus=numFieldOnFocus(this) </events>
+	<applycomma>true</applycomma>
+</field>
+<field>
+	<name>GAC_RATE_r_</name>
+	<title><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_grid_title_rate")%></title>
+	<type>text</type>
+	<tablename>GI_GU_AC_ACTIONDTL</tablename>
+	<tablefieldname>GAC_RATE</tablefieldname>
+	<style>  MaxLength=9  Size=9 style="text-align: right"</style>
+	<events>onblur=ratelf(this)</events>
+</field>
+<field>
+	<name>GAC_RATE_PERCENT_r_</name>
+	<title><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_grid_title_perc_of_rate")%></title>
+	<type>text</type>
+	<tablename>GI_GU_AC_ACTIONDTL</tablename>
+	<tablefieldname>GAC_RATE_PERCENT</tablefieldname>
+	<style> <%="S".equalsIgnoreCase(policyType)?"readonly":""%> MaxLength=5  Size=5 style="text-align: right"</style>
+	<events>onchange=ratePercentChange(this)</events>
+</field>
+
+<field>
+	<name>GAC_PERCENT_PERMILLI_r_</name>
+	<title><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_grid_title_cal_basis")%></title>
+	<type>fixeddropdown</type>
+	<tablename>GI_GU_AC_ACTIONDTL</tablename>
+	<tablefieldname>GAC_PERCENT_PERMILLI</tablefieldname>
+	<value>C|Percent,M|Permilli,R|Rate</value>
+	<currenttablefieldname>GAC_PERCENT_PERMILLI</currenttablefieldname>
+	<style>style="font-family: verdana"</style>
+	<events>onchange=calculationBaseChanged(this)</events>
+</field>
+
+
+<field>
+	<name>GAC_FLAT_AMOUNT_r_</name>
+	<title><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_grid_title_flat_amnt")%></title>
+	<type>text</type>
+	<tablename>GI_GU_AC_ACTIONDTL</tablename>
+	<tablefieldname>GAC_FLAT_AMOUNT</tablefieldname>
+	<style>  MaxLength=12  Size=12 style="text-align:right"</style>
+	<events>onblur=alfocus(this) onfocus=flatOnFocus(this) </events>
+	<applycomma>true</applycomma>
+</field>
+<field>
+	<name>GAC_AMOUNT_r_</name>
+<% if(deptMarine){ %>
+	<title><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_grid_title_basic_prem")%></title>
+<% } %>
+	<type>text</type>
+	<tablename>GI_GU_AC_ACTIONDTL</tablename>
+	<tablefieldname>GAC_AMOUNT</tablefieldname>
+	<style> readonly MaxLength=14  Size=14 style="text-align:right;"</style>
+	<events>onblur=applyComma(this) onfocus=numFieldOnFocus(this)  </events>
+	<applycomma>true</applycomma>
+</field>
+
+<% if(deptMarine){ %>
+<field>
+	<name>Total</name>
+	<type>title</type>	
+	<value>Total</value>
+	<linkedobjectposition>7</linkedobjectposition>
+</field>
+<field>
+	<name>T_GAC_AMOUNT</name>
+	<type>total</type>
+	<linkedobjectname>GAC_AMOUNT_r_</linkedobjectname>
+	<operation>clientside</operation>
+	<disabled>yes</disabled>
+	<linkedobjectposition>8</linkedobjectposition>
+	<style>MaxLength=14 Size=14 style="text-align:right"</style>
+</field>
+<% } %>
+
+<% if(!deptMarine){ %>
+
+<field>
+	<name>BASICPREMIUM</name>
+	<title><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_grid_title_basic_prem")%></title>
+	<type>text</type>
+	<style> MaxLength=12  Size=12 style="text-align:right"</style>
+</field>
+
+
+<% } %>
+
+<% if(session.getAttribute("PDP_DEPT_CODE")!=null && ((String)session.getAttribute("PDP_DEPT_CODE")).equalsIgnoreCase((String)application.getAttribute("DEPTT_FIRE"))){ %>
+<field>
+	<name>GAC_CLASSTYPE_r_</name>
+	<title><%=geninslib.rb.LabelResourceHandler.getGeninsValue(request,"ggu_se_item_risk_grid_title_class")%></title>
+	<type>fixeddropdown</type>
+	<tablename>GI_GU_AC_ACTIONDTL</tablename>
+	<tablefieldname>GAC_CLASSTYPE</tablefieldname>
+	<value>|None,I|I,II|II,III|III,IV|IV,AI|AI,AII|AII,BI|BI,BII|BII,CI|CI,CII|CII,DI|DI,DII|DII,A|A,B|B</value>
+	<currenttablefieldname>GAC_CLASSTYPE</currenttablefieldname>
+	<style>style="font-family: verdana"</style>
+</field>
+
+<% } 
+
+
+ if(deductibles){ %>
+
+<field>
+	<name>dedexcessbtn</name>
+	<type>hyperbutton</type>
+	<tablename>GI_GU_AC_ACTIONDTL</tablename>
+	<hyperlink>dedExcessBtnClicked(this)</hyperlink>
+	<value>D/E</value>
+	<style>title="Deductibles/Excess" class="sbttn"</style>
+</field>
+<% } %>
+
+
+<field>
+	<name>GAC_ACTIONSERIALNO_pk_</name>
+	<type>hiddendatabasefield</type>
+	<currenttablefieldname>GAC_ACTIONSERIALNO</currenttablefieldname>
+</field>
+ </abc:tablegrid> 
+ </DIV> 
+ <!-- <input type=hidden value=GAC_ACTIONSERIALNO name=snofield> -->
+ <input type=hidden value=GIH_ITEMNO name=snofield1>
+ <input type=hidden name=control>
+ <input type=hidden name=notnullfield value="GAC_ACTION_CODE">
+ <input type=hidden name=datamangiasnchildclass value=geninslib.policy.UpdateItemHeader>
+ <input type=hidden name=numfields value='GAC_NONPANEL_LIMIT,GAC_BASEVALUE,GAC_FLAT_AMOUNT,GAC_AMOUNT'>
+ 
+ <input type=hidden name=actionSerialNo>
+ <input type=hidden name=perilDesc>
+ <input type=hidden name=sumInsured>
+ 
+ 
+ <input type='hidden' name='UPC' value='yes' />
+ 
+ <DIV id=Button language=javascript style="FONT-FAMILY: Verdana; FONT-SIZE: xx-small; FONT-WEIGHT: bold; HEIGHT: <%=application.getAttribute("ButtonHeight")%>px; LEFT: <%=application.getAttribute("ButtonLeft")%>px; OVERFLOW: auto; POSITION: absolute; TOP: 94%; VISIBILITY: visible; WIDTH: 80%">   
+ <input name=cmd_Save class=button value= "  Save  " type=button onclick="send(this,1)"> 
+ <input accessKey=d name=cmd_Delete class=button  type=button value="Delete Selected" onclick="send2(this,1)"> 
+ <input accessKey=b name=cmd_Back class=button  type=button value="  Back  " onclick="backClicked()"> 
+ </DIV> 
+ </form> 
+ <script language='javascript'>
+
+<%
+	if((request.getAttribute("MainError")!=null && request.getAttribute("MainError").equals("true")) || (request.getAttribute("ProcessError")!=null && request.getAttribute("ProcessError").equals("true")))
+	{
+		out.println("alert('Unable to process data, please try again or contact support team');");
+	}
+%>
+
+
+<% if(deptMarine){ %>
+  function getColSum(aa) 
+  {
+  	var str="000000",sa=0,zz;
+  	for (i=0;i<100000;i++) {
+  		zz=str+i;
+  		a=document.getElementById(aa+zz.substring(zz.length-6,zz.length));
+  		if (a==null) 
+  			break;
+  		
+  		val = a.value;
+  		val = removeChar(val,',');
+  		if (isNumberM(val)) 
+  		{
+  			sa=eval(val)+eval(sa);
+  		}
+  	}
+  	return sa;
+  }
+
+	document.getElementById('T_GAC_AMOUNT').value = getColSum("GAC_AMOUNT_r_");
+	applyComma(document.getElementById('T_GAC_AMOUNT'));
+<% } %>
+
+	e = totalRecords-1;
+	f = "00000"+e;
+	f = f.substring(f.length-6,f.length);
+
+	var selecInd = document.getElementById('GAC_ACTION_CODE_r_'+f).selectedIndex;
+	if(document.getElementById('GAC_ACTION_CODE_r_'+f).options[0]!=null)
+		document.getElementById('GAC_RATE_r_'+f).value = GAC_ACTION_CODE_r_desc[selecInd];
+
+	document.getElementById('GAC_ACTIONSERIALNO_pk_'+f).value = '<%=tempPerils%>';
+
+ </script>
+
+ <script language='javascript'>
+<% if(!deptMarine){ %>
+	var partialRowColor = "partialRowColor";
+	for(a=0;a<totalRecords;a++)
+	{
+	    debugger;
+		id = "00000"+a;
+		id = id.substring(id.length-6);
+
+		if(document.getElementById('GAC_ACTION_CODE_r_'+id)==null)
+			break;
+
+		if(document.getElementById('GAC_AMOUNT_r_'+id).value == '0' || document.getElementById('GAC_AMOUNT_r_'+id).value == '')
+			document.getElementById("trrow"+id).className = partialRowColor;
+
+
+		<%if(!deptMarine){%>
+			for(j = 0; j < tariffgroup.length; j++)
+			{
+				tg = tariffgroup[j].split("~");
+				var pcode = tg[0];
+				var pgroup = tg[1];
+				var pbvtype = tg[3];
+				var flatPremium = tg[5];
+
+
+				if(pcode == document.getElementById('GAC_ACTION_CODE_r_' + id).value)
+				{
+
+					document.getElementById("group" + id).value = pgroup;
+					document.getElementById("PTF_BASEVALUETYPE" + id).value = pbvtype;
+          if(document.getElementById("GAC_FLAT_AMOUNT_r_"+id).value =='')
+          document.getElementById("GAC_FLAT_AMOUNT_r_"+id).value = flatPremium;
+					break;
+				}
+			}
+		<%}%>
+		
+			
+			if(document.getElementById('group'+id).value=='A'){
+				document.getElementById('PCY_ACTIONTYPE_r_'+id).value = 'PR';
+				document.getElementById('GAC_ACTIONTAG_r_'+id).value = '6';
+			}
+		
+			if(document.getElementById('group'+id).value=='B')
+			{
+				document.getElementById('PCY_ACTIONTYPE_r_'+id).value = 'EX';
+				document.getElementById('GAC_ACTIONTAG_r_'+id).value = '7.1';
+			}
+
+			if(document.getElementById('group'+id).value=='C'){
+				document.getElementById('PCY_ACTIONTYPE_r_'+id).value = 'VE';
+				document.getElementById('GAC_ACTIONTAG_r_'+id).value = '7.3';
+			}
+
+			if(document.getElementById('group'+id).value=='D'){
+				document.getElementById('PCY_ACTIONTYPE_r_'+id).value = 'IN';
+				document.getElementById('GAC_ACTIONTAG_r_'+id).value = '7.5';
+			}
+
+			if(document.getElementById('group'+id).value=='E'){
+				document.getElementById('PCY_ACTIONTYPE_r_'+id).value = 'OT';
+				document.getElementById('GAC_ACTIONTAG_r_'+id).value = '7.7';	
+			}
+
+			if(document.getElementById('group'+id).value=='F'){
+				document.getElementById('PCY_ACTIONTYPE_r_'+id).value = 'O2';
+				document.getElementById('GAC_ACTIONTAG_r_'+id).value = '7.9';	
+			}
+
+			if(document.getElementById('group'+id).value=='G'){
+				document.getElementById('PCY_ACTIONTYPE_r_'+id).value = 'O3';
+				document.getElementById('GAC_ACTIONTAG_r_'+id).value = '7.92';	
+			}
+
+
+        if(document.getElementById('group'+id).value=='O'){
+            document.getElementById('PCY_ACTIONTYPE_r_'+id).value = 'OX';
+            document.getElementById('GAC_ACTIONTAG_r_'+id).value = '7.61';
+        }
+
+	}
+
+	function setGroup(cid)
+	{
+		
+		groupId = cid.id;
+		groupId = groupId.substring(groupId.length-6);
+
+
+
+
+		<%if(!deptMarine){%>
+		for(j=0;j<tariffgroup.length;j++)
+		{
+			tg = tariffgroup[j].split("~");
+			
+			var pcode=tg[0];
+			var pgroup=tg[1];
+			var pbvtype=tg[3];
+      var flatPremium = tg[5];
+
+
+			if(pcode==cid.value)
+			{
+				document.getElementById("group"+groupId).value=pgroup;
+				document.getElementById("PTF_BASEVALUETYPE"+groupId).value =pbvtype;
+        document.getElementById("GAC_FLAT_AMOUNT_r_"+id).value = flatPremium;
+
+				if(document.getElementById('PTF_BASEVALUETYPE' + groupId).value == 'null' || document.getElementById('PTF_BASEVALUETYPE' + groupId).value == '')
+					document.getElementById('PTF_BASEVALUETYPE' + groupId).value = 'N'
+
+				document.getElementById('GAC_BASEVALUE_r_' + groupId).className = 'inputtextreadonly';
+				document.getElementById('GAC_BASEVALUE_r_' + groupId).readOnly = true;
+				if(document.getElementById('PTF_BASEVALUETYPE' + groupId).value == 'N')
+				{
+					document.getElementById('GAC_BASEVALUE_r_' + groupId).className = 'inputtext';
+					document.getElementById('GAC_BASEVALUE_r_' + groupId).readOnly = false;
+				}
+
+				break;
+			}
+		}
+		<%}%>
+
+		
+		if(document.getElementById("group"+groupId).value=='A')
+		{
+			document.getElementById('GAC_ACTIONTAG_r_'+groupId).value='6';
+			document.getElementById('GAC_ACTIONSERIALNO_pk_'+groupId).value = '<%=tempPerils%>';
+			document.getElementById('PCY_ACTIONTYPE_r_'+groupId).value = 'PR';
+		}
+		
+		if(document.getElementById("group"+groupId).value=='B'){
+			document.getElementById('GAC_ACTIONTAG_r_'+groupId).value='7.1';
+			document.getElementById('GAC_ACTIONSERIALNO_pk_'+groupId).value = <%=tempExclusions%>;
+			document.getElementById('PCY_ACTIONTYPE_r_'+groupId).value = 'EX';
+		}
+		
+		if(document.getElementById("group"+groupId).value=='C'){
+			document.getElementById('GAC_ACTIONTAG_r_'+groupId).value='7.3';
+			document.getElementById('GAC_ACTIONSERIALNO_pk_'+groupId).value = <%=tempVoluntaryExcess%>;
+			document.getElementById('PCY_ACTIONTYPE_r_'+groupId).value = 'VE';
+		}
+
+		if(document.getElementById("group"+groupId).value=='D'){
+			document.getElementById('GAC_ACTIONTAG_r_'+groupId).value='7.5';
+			document.getElementById('GAC_ACTIONSERIALNO_pk_'+groupId).value = <%=tempInclusions%>;
+			document.getElementById('PCY_ACTIONTYPE_r_'+groupId).value = 'IN';
+		}
+
+		if(document.getElementById("group"+groupId).value=='E')
+		{
+			document.getElementById('GAC_ACTIONTAG_r_'+groupId).value='7.7';
+			document.getElementById('GAC_ACTIONSERIALNO_pk_'+groupId).value = <%=tempOthers%>;
+			document.getElementById('PCY_ACTIONTYPE_r_'+groupId).value = 'OT';
+
+		}
+
+		if(document.getElementById("group"+groupId).value=='F')
+		{
+			document.getElementById('GAC_ACTIONTAG_r_'+groupId).value='7.9';
+			document.getElementById('GAC_ACTIONSERIALNO_pk_'+groupId).value = <%=tempOther2%>;
+			document.getElementById('PCY_ACTIONTYPE_r_'+groupId).value = 'O2';
+		}
+
+		if(document.getElementById("group"+groupId).value=='G')
+		{
+			document.getElementById('GAC_ACTIONTAG_r_'+groupId).value='7.92';
+			document.getElementById('GAC_ACTIONSERIALNO_pk_'+groupId).value = <%=tempOther3%>;
+			document.getElementById('PCY_ACTIONTYPE_r_'+groupId).value = 'O3';
+		}
+		
+		if(document.getElementById("group"+groupId).value=='O')
+		{
+			document.getElementById('GAC_ACTIONTAG_r_'+groupId).value='7.61';
+			document.getElementById('GAC_ACTIONSERIALNO_pk_'+groupId).value = <%=tempOther4%>;
+			document.getElementById('PCY_ACTIONTYPE_r_'+groupId).value = 'OX';
+		}
+
+		<% if(healthDept){ %>
+			document.getElementById('GAC_BASEVALUE_r_'+groupId).value = '0';
+			for(limit=0;limit<healthperilarray.length;limit++)
+			{
+				arr = healthperilarray[limit].split("~");
+				tariffCode = arr[0];
+				tariffLimit = arr[1];
+				
+				if(tariffCode==cid.value)
+				{
+					document.getElementById('GAC_BASEVALUE_r_'+groupId).value = tariffLimit;
+					setCommaInField(document.getElementById('GAC_BASEVALUE_r_'+groupId));
+					break;
+				}
+			}
+		
+		<% } %>
+	}
+	function validateGroup()
+	{
+		val7_7 = false;
+		val7_9 = false;
+
+		for(e=0;e<(totalRecords);e++)
+		{
+			id = "00000"+e;
+			id = id.substring(id.length-6);
+
+			if(document.getElementById('GAC_ACTIONTAG_r_'+id).value=='7.7')
+				val7_7 = true;	
+
+
+			if(document.getElementById('GAC_ACTIONTAG_r_'+id).value=='7.9')
+				val7_9 = true;
+		}
+
+		if(val7_7 && val7_9)
+			return true;
+		else
+			return false;
+	}
+	
+
+	serialNo = "00000"+(totalRecords-1);
+	serialNo = serialNo.substring(serialNo.length-6);
+	
+	if(document.getElementById('GAC_ACTIONTAG_r_'+serialNo).value=='6')
+		document.getElementById('GAC_ACTIONSERIALNO_pk_'+serialNo).value = '<%=tempPerils%>';
+
+	if(document.getElementById('GAC_ACTIONTAG_r_'+serialNo).value=='7.1')
+		document.getElementById('GAC_ACTIONSERIALNO_pk_'+serialNo).value = <%=tempExclusions%>;
+
+	if(document.getElementById('GAC_ACTIONTAG_r_'+serialNo).value=='7.3')
+		document.getElementById('GAC_ACTIONSERIALNO_pk_'+serialNo).value = <%=tempVoluntaryExcess%>;
+
+	if(document.getElementById('GAC_ACTIONTAG_r_'+serialNo).value=='7.5')
+		document.getElementById('GAC_ACTIONSERIALNO_pk_'+serialNo).value = <%=tempInclusions%>;
+
+	if(document.getElementById('GAC_ACTIONTAG_r_'+serialNo).value=='7.7')
+		document.getElementById('GAC_ACTIONSERIALNO_pk_'+serialNo).value = <%=tempOthers%>;
+
+	if(document.getElementById('GAC_ACTIONTAG_r_'+serialNo).value=='7.9')
+		document.getElementById('GAC_ACTIONSERIALNO_pk_'+serialNo).value = <%=tempOther2%>;
+
+	if(document.getElementById('GAC_ACTIONTAG_r_'+serialNo).value=='7.92')
+		document.getElementById('GAC_ACTIONSERIALNO_pk_'+serialNo).value = <%=tempOther3%>;
+
+
+	for(row=0;row<(totalRecords-1);row++)
+	{
+		id = "00000"+row;
+		id = id.substring(id.length-6);
+		
+		filterCalculationBasis(document.getElementById('GAC_PERCENT_PERMILLI_r_'+id));
+		prevRow = row-1;
+		prevVal = 0;
+		prevGroup = '';
+		if(prevRow>-1)
+		{
+			prevRow = "00000"+prevRow;
+			prevRow = prevRow.substring(prevRow.length-6);
+		
+			prevVal = document.getElementById('BASICPREMIUM'+prevRow).value;
+      if(prevVal=='')
+        prevVal='0';
+			prevVal = removeChar(prevVal,',');
+			prevGroup = document.getElementById('group'+prevRow).value;
+			
+			
+		}
+		else
+		{
+      document.getElementById('BASICPREMIUM'+id).value = prevVal = document.getElementById('GAC_AMOUNT_r_'+id).value;
+			//setCommaInField(document.getElementById('BASICPREMIUM'+id));
+			continue;
+			
+		}
+		group = document.getElementById('group'+id).value;
+		val = document.getElementById('GAC_AMOUNT_r_'+id).value;
+		if(val=='')
+			val='0';
+			
+		val = removeChar(val,',');
+
+		debugger;
+/*		if(document.getElementById("GAC_ACTION_CODE_r_"+id) != null && document.getElementById("GAC_ACTION_CODE_r_"+id).value === "0021") {
+			document.getElementById('BASICPREMIUM' + id).value = prevVal;
+			setCommaInField(document.getElementById('BASICPREMIUM'+id));
+			continue;
+		}*/
+
+		if(prevGroup=='A' && group=='B')
+				document.getElementById('BASICPREMIUM'+id).value = eval(prevVal) - eval(val);
+
+		if(prevGroup=='A' && group=='A')
+				document.getElementById('BASICPREMIUM'+id).value = eval(prevVal) + eval(val);
+
+		if((prevGroup=='C'|| prevGroup=='F' || prevGroup=='B') && group=='B')
+				document.getElementById('BASICPREMIUM'+id).value = eval(prevVal) - eval(val);
+
+		if(group=='B' || group=='C' || group=='F' || group=='O' )
+			document.getElementById('BASICPREMIUM'+id).value = eval(prevVal) - eval(val);
+
+		if(group=='A' || group=='D' || group=='E' || group=='G')
+			document.getElementById('BASICPREMIUM'+id).value = eval(prevVal) + eval(val);
+		
+
+		if((prevGroup=='A' || prevGroup=='B') && group=='C')
+				document.getElementById('BASICPREMIUM'+id).value = eval(prevVal) - eval(val);
+		else if(prevGroup=='B' && group=='B')
+				document.getElementById('BASICPREMIUM'+id).value = eval(prevVal) - eval(val);
+
+
+		if((prevGroup=='A' || prevGroup=='B' || prevGroup=='C') && group=='D')
+				document.getElementById('BASICPREMIUM'+id).value = eval(prevVal) + eval(val);
+		else if(prevGroup=='C' && group=='C')
+				document.getElementById('BASICPREMIUM'+id).value = eval(prevVal) - eval(val);
+		
+		if((prevGroup=='A' || prevGroup=='B' || prevGroup=='C' || prevGroup=='D') && group=='E')
+				document.getElementById('BASICPREMIUM'+id).value = eval(prevVal) + eval(val);
+		else if(prevGroup=='D' && group=='D')
+				document.getElementById('BASICPREMIUM'+id).value = eval(prevVal) + eval(val);
+
+
+		if((prevGroup=='A' || prevGroup=='B' || prevGroup=='C' || prevGroup=='D' || prevGroup=='E') && group=='F')
+				document.getElementById('BASICPREMIUM'+id).value = eval(prevVal) - eval(val);
+		else if(prevGroup=='E' && group=='E')
+				document.getElementById('BASICPREMIUM'+id).value = eval(prevVal) + eval(val);
+
+
+		if((prevGroup=='A' || prevGroup=='B' || prevGroup=='C' || prevGroup=='D' || prevGroup=='E' || prevGroup=='F') && group=='G')
+				document.getElementById('BASICPREMIUM'+id).value = eval(prevVal) + eval(val);
+		else if(prevGroup=='F' && group=='F')
+				document.getElementById('BASICPREMIUM'+id).value = eval(prevVal) - eval(val);
+
+
+		if(prevGroup=='G' && group=='G')
+				document.getElementById('BASICPREMIUM'+id).value = eval(prevVal) + eval(val);
+
+
+		document.getElementById('BASICPREMIUM'+id).value = round(document.getElementById('BASICPREMIUM'+id).value,roundedPrecision);
+		setCommaInField(document.getElementById('BASICPREMIUM'+id));
+	}
+
+<% } %>
+
+	totRecords = totalRecords;
+
+<% if(session.getAttribute("GDH_POSTING_TAG")!=null && ((String)session.getAttribute("GDH_POSTING_TAG")).equalsIgnoreCase("Y"))
+{ 
+	if(!(session.getAttribute("CONFIRMDOC")!=null && ((String)session.getAttribute("CONFIRMDOC")).equalsIgnoreCase("Y"))) 
+	{ 
+
+%>
+	document.myForm.cmd_Save.disabled=true;
+	document.myForm.cmd_Delete.disabled=true;
+<% 	} 
+}
+
+%>
+
+function setDescInCombo()
+{
+
+
+
+    for(a = 0; a < (totalRecords - 1); a++)
+    {
+        id = "00000" + a;
+        id = id.substring(id.length - 6);
+
+        btnClicked(document.getElementById("GAC_ACTION_CODE_r_"+id));
+    }
+}
+
+//setDescInCombo();
+
+	id = "00000"+(totalRecords-1);
+	id = id.substring(id.length-6);
+	
+	document.getElementById('GAC_BASEVALUE_r_'+id).value = '<%=(session.getAttribute("GIH_SUMINSURED")==null?"":StringHandler.applyComma(session.getAttribute("GIH_SUMINSURED").toString()))%>';
+
+<% if(calculationOnAAL){ %>
+	document.getElementById('GAC_BASEVALUE_r_'+id).value = '<%=(session.getAttribute("GGD_DOUBLESHIPLIMIT")==null?"":StringHandler.applyComma(session.getAttribute("GGD_DOUBLESHIPLIMIT").toString()))%>';
+<% } %>
+
+<% if(session.getAttribute("gpIncrease")!=null && ((String)session.getAttribute("gpIncrease")).equalsIgnoreCase("yes")){
+	session.removeAttribute("gpIncrease");
+	
+%>
+	alert('Total Gross Premium is greater than Company Share');
+<% } %>
+
+ function checkAmount(fld)
+ {
+	 
+	 groupId = fld.id;
+	 groupId = groupId.substring(groupId.length-6);
+
+
+	if(!(validate(fld,'n',false)))
+	{
+		fld.value='0';
+		return;
+	}
+	
+ 	baseValue=document.getElementById("text55").value;
+ 	baseValue = removeChar(baseValue,',')
+ 	
+ 	fldValue = fld.value;
+ 	fldValue = removeChar(fldValue,',')
+
+ 	<%if(isIgnoreBaseValueTag != null && isIgnoreBaseValueTag.equalsIgnoreCase("N")){%>
+ 	if(parseFloat(fldValue)>parseFloat(baseValue) && !<%=healthDept%>)
+ 	{
+		alert("Base Value Can't Be Greater Than SumInsured..!");
+		fld.value='0';
+ 		fld.focus();
+ 	}
+	 <%}%>
+ 	setCommaInField(fld);
+ }
+
+	if(window.parent.frames["menuFrame"]!=null)
+		window.parent.frames["menuFrame"].inprocess = false;
+	
+	
+	<%if(session.getAttribute("GDH_POLICYTYPE")!=null && ((String)session.getAttribute("GDH_POLICYTYPE")).equalsIgnoreCase("S")){ %>
+		function setShortPeriodRate()
+		{
+			e = totalRecords-1;
+			f = "00000"+e;
+			f = f.substring(f.length-6,f.length);
+			if(document.getElementById('GAC_RATE_PERCENT_r_'+f)!=null)
+				document.getElementById('GAC_RATE_PERCENT_r_'+f).value = '<%=session.getAttribute("rateForShortPeriod")%>';
+		}
+		setShortPeriodRate();
+	<%}%>
+
+<%if(isCommDateLockEnabled){%>
+<% if(obj_DocumentHeaderBean.getBaseDoc().isCovernote() && !(obj_DocumentHeaderBean.isBaseDocTypeTemplate())){%>
+<%if(disableAllFieldsInCovernote){%>
+<%if(!isAmmendment && !motorDept){
+if(obj_DocumentHeaderBean.getBaseDoc().isCovernote() && !(obj_DocumentHeaderBean.isBaseDocTypeTemplate())){%>
+<%if(enableAltFieldsInCovernote){%>
+<%} else {%>
+disableAllFields();
+<%}} else {%>
+disableAllFields();
+<%}}else{%>
+disableAllFields();
+<%}}}}%>
+	 <%if(deptMarine && isRateBased){%>
+
+		document.getElementById('GAC_BASEVALUE_r_' + id).className = 'inputtext';
+		document.getElementById('GAC_BASEVALUE_r_' + id).readOnly = false;
+
+
+	 <%}%>
+
+  </script>
+ </body> 
+ </html>

@@ -1,15 +1,13 @@
 import { useState, useEffect } from 'react'
 
-const DEFAULT_DAYS = 7
+const today = () => new Date().toISOString().slice(0, 10)
+const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10) }
 
 export default function FetchDialog({ apps, onClose, onComplete }) {
   const [step, setStep]     = useState('config') // config | running | done
   const [selectedIds, setSelectedIds] = useState([])
-  const [since, setSince]   = useState(() => {
-    const d = new Date()
-    d.setDate(d.getDate() - DEFAULT_DAYS)
-    return d.toISOString().slice(0, 10)
-  })
+  const [since, setSince]   = useState(() => daysAgo(7))
+  const [toDate, setToDate] = useState(() => today())
   const [result, setResult] = useState(null)
   const [error, setError]   = useState(null)
 
@@ -35,7 +33,7 @@ export default function FetchDialog({ apps, onClose, onComplete }) {
     setStep('running')
     setError(null)
     try {
-      const res = await window.api.invoke('outlook:fetch', { appIds: selectedIds, sinceDate: since })
+      const res = await window.api.invoke('outlook:fetch', { appIds: selectedIds, sinceDate: since, toDate })
       setResult(res)
       setStep('done')
     } catch (e) {
@@ -91,15 +89,32 @@ export default function FetchDialog({ apps, onClose, onComplete }) {
               </div>
 
               <div className="fetch-section">
-                <div className="fetch-section-label">Fetch emails since</div>
-                <div className="form-row" style={{ maxWidth: 220 }}>
-                  <input
-                    type="date"
-                    className="form-control"
-                    value={since}
-                    onChange={e => setSince(e.target.value)}
-                    max={new Date().toISOString().slice(0, 10)}
-                  />
+                <div className="fetch-section-label">Date range</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 4 }}>From</div>
+                    <input
+                      type="date"
+                      className="form-control"
+                      style={{ width: 160 }}
+                      value={since}
+                      onChange={e => setSince(e.target.value)}
+                      max={toDate}
+                    />
+                  </div>
+                  <div style={{ marginTop: 18, color: 'var(--text-secondary)' }}>→</div>
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 4 }}>To</div>
+                    <input
+                      type="date"
+                      className="form-control"
+                      style={{ width: 160 }}
+                      value={toDate}
+                      onChange={e => setToDate(e.target.value)}
+                      min={since}
+                      max={today()}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -145,7 +160,7 @@ export default function FetchDialog({ apps, onClose, onComplete }) {
               {result.fetched === 0 && (!result.errors || !result.errors.length) && (
                 <div className="fetch-result-row">
                   <span className="fetch-result-icon">ℹ</span>
-                  <span>No new emails found since {since}.</span>
+                  <span>No new emails found between {since} and {toDate}.</span>
                 </div>
               )}
             </div>
@@ -159,7 +174,7 @@ export default function FetchDialog({ apps, onClose, onComplete }) {
               <button
                 className="btn btn-primary"
                 onClick={handleFetch}
-                disabled={!selectedIds.length || !since}
+                disabled={!selectedIds.length || !since || !toDate}
               >
                 Fetch Emails
               </button>

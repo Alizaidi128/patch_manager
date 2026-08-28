@@ -64,12 +64,10 @@ async function getFolders() {
 }
 
 // Fetch emails from a folder. folderPath = "StoreName/Folder/Sub/..."
-async function getEmails(folderPath, sinceDate, maxEmails = 100) {
-  const json = await runPs('Get-OutlookEmails.ps1', [
-    '-FolderPath', folderPath,
-    '-SinceDate', sinceDate,
-    '-MaxEmails', String(maxEmails)
-  ])
+async function getEmails(folderPath, sinceDate, toDate, maxEmails = 100) {
+  const args = ['-FolderPath', folderPath, '-SinceDate', sinceDate, '-MaxEmails', String(maxEmails)]
+  if (toDate) args.push('-ToDate', toDate)
+  const json = await runPs('Get-OutlookEmails.ps1', args)
   if (!json) return []
   try {
     const parsed = JSON.parse(json)

@@ -1,6 +1,7 @@
 param(
   [string]$FolderPath,   # Full path: "StoreName/Folder/Subfolder/..."
   [string]$SinceDate,
+  [string]$ToDate = "",
   [int]$MaxEmails = 100
 )
 
@@ -41,12 +42,14 @@ foreach ($part in $subParts) {
   }
 }
 
-$since   = [DateTime]::Parse($SinceDate)
+$since  = [DateTime]::Parse($SinceDate)
+$toEnd  = if ($ToDate -ne "") { [DateTime]::Parse($ToDate).AddDays(1) } else { [DateTime]::MaxValue }
 $results = @()
 
 foreach ($mail in $folder.Items) {
   if ($mail.Class -ne 43) { continue }   # 43 = olMail
   if ($mail.ReceivedTime -lt $since) { continue }
+  if ($mail.ReceivedTime -ge $toEnd) { continue }
 
   $attachments = @()
   foreach ($att in $mail.Attachments) {

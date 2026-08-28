@@ -90,6 +90,7 @@ function initializeDb() {
   try { db.exec(`ALTER TABLE apps ADD COLUMN remote_war_path TEXT`) } catch {}
   try { db.exec(`ALTER TABLE apps ADD COLUMN tomcat_remote_path TEXT`) } catch {}
   try { db.exec(`ALTER TABLE apps ADD COLUMN sftp_server_path TEXT`) } catch {}
+  try { db.exec(`ALTER TABLE apps ADD COLUMN patch_path TEXT`) } catch {}
 
   const insertDefault = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)')
   insertDefault.run('patches_root_dir', 'D:\\Office\\Patches_automated')

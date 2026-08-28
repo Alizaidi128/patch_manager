@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a6fd4"/>
+      <stop offset="100%" style="stop-color:#0d4fa0"/>
+    </linearGradient>
+    <linearGradient id="gearGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffffff"/>
+      <stop offset="100%" style="stop-color:#cce0ff"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background rounded square -->
+  <rect width="256" height="256" rx="48" ry="48" fill="url(#bg)"/>
+
+  <!-- Envelope body -->
+  <rect x="38" y="80" width="180" height="120" rx="10" ry="10" fill="none" stroke="white" stroke-width="10" fill-opacity="0"/>
+  <rect x="38" y="80" width="180" height="120" rx="10" ry="10" fill="white" fill-opacity="0.15"/>
+
+  <!-- Envelope flap (V shape) -->
+  <polyline points="38,80 128,148 218,80" fill="none" stroke="white" stroke-width="10" stroke-linejoin="round"/>
+
+  <!-- Gear badge (bottom-right overlay) -->
+  <circle cx="182" cy="182" r="46" fill="#0d4fa0"/>
+  <circle cx="182" cy="182" r="40" fill="url(#bg)"/>
+
+  <!-- Gear teeth -->
+  <g fill="url(#gearGrad)" stroke="none">
+    <!-- Top -->
+    <rect x="176" y="142" width="12" height="16" rx="3"/>
+    <!-- Bottom -->
+    <rect x="176" y="206" width="12" height="16" rx="3"/>
+    <!-- Left -->
+    <rect x="142" y="176" width="16" height="12" rx="3"/>
+    <!-- Right -->
+    <rect x="206" y="176" width="16" height="12" rx="3"/>
+    <!-- Top-left -->
+    <rect x="152" y="150" width="12" height="16" rx="3" transform="rotate(-45 158 158)"/>
+    <!-- Top-right -->
+    <rect x="194" y="148" width="12" height="16" rx="3" transform="rotate(45 206 158)"/>
+    <!-- Bottom-left -->
+    <rect x="150" y="192" width="12" height="16" rx="3" transform="rotate(45 156 206)"/>
+    <!-- Bottom-right -->
+    <rect x="196" y="193" width="12" height="16" rx="3" transform="rotate(-45 208 206)"/>
+  </g>
+
+  <!-- Gear center circle -->
+  <circle cx="182" cy="182" r="14" fill="#0d4fa0"/>
+  <circle cx="182" cy="182" r="8" fill="url(#gearGrad)"/>
+</svg>

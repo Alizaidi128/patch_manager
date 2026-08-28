@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import UpdateBanner from './components/UpdateBanner'
 import Sidebar from './components/Sidebar'
 import Settings from './components/Settings'
 import AppConfig from './components/AppConfig'
@@ -167,6 +168,7 @@ export default function App() {
 
   return (
     <div className="app-layout">
+      <UpdateBanner />
       <Sidebar
         apps={apps}
         selectedAppId={selectedAppId}

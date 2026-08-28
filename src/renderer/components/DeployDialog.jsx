@@ -17,6 +17,7 @@ export default function DeployDialog({ patchId, onClose, onDeployed }) {
   const [restart, setRestart] = useState(false)
   const [results, setResults] = useState(null)
   const [error, setError]     = useState(null)
+  const [showCred, setShowCred] = useState(false)    // credential hint expanded
 
   useEffect(() => {
     window.api.invoke('deploy:preview', { patchId })
@@ -29,7 +30,7 @@ export default function DeployDialog({ patchId, onClose, onDeployed }) {
       .catch(e => { setError(e.message); setStep('error') })
   }, [patchId])
 
-  const isRdp = data?.app?.deployment_mode === 'rdp'
+  const isRdp = false // RDP-Assisted now deploys like SMB — no manual mode
 
   function toggleFile(id) {
     setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
@@ -140,6 +141,30 @@ export default function DeployDialog({ patchId, onClose, onDeployed }) {
                 </div>
               )}
 
+              {/* Credential hint — RDP-Assisted only */}
+              {data?.credentialHint && (
+                <div className="cred-hint-panel">
+                  <div className="cred-hint-header" onClick={() => setShowCred(p => !p)}>
+                    <span>🔑 Network credentials for copy-paste into Windows prompts</span>
+                    <span>{showCred ? '▲' : '▼'}</span>
+                  </div>
+                  {showCred && (
+                    <div className="cred-hint-body">
+                      <div className="cred-hint-row">
+                        <span className="cred-hint-label">Username</span>
+                        <span className="cred-hint-value mono">{data.credentialHint.user}</span>
+                        <button className="copy-btn" onClick={() => navigator.clipboard.writeText(data.credentialHint.user)}>⧉</button>
+                      </div>
+                      <div className="cred-hint-row">
+                        <span className="cred-hint-label">Password</span>
+                        <span className="cred-hint-value mono">{'•'.repeat(Math.min((data.credentialHint.password || '').length, 20))}</span>
+                        <button className="copy-btn" onClick={() => navigator.clipboard.writeText(data.credentialHint.password)}>⧉ Copy</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* App / mode info */}
               <div className="deploy-info-bar">
                 <span className="deploy-info-item">
@@ -216,6 +241,16 @@ export default function DeployDialog({ patchId, onClose, onDeployed }) {
                         </span>
                         <span className="deploy-info-filename">{f.original_filename}</span>
                         <span className="deploy-info-reason">{f.reason}</span>
+                        {f.canForce && (
+                          <label className="force-redeploy-check" title="Force re-deploy this file">
+                            <input
+                              type="checkbox"
+                              checked={selected.includes(f.id)}
+                              onChange={() => toggleFile(f.id)}
+                            />
+                            <span>Re-deploy</span>
+                          </label>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -248,6 +283,7 @@ export default function DeployDialog({ patchId, onClose, onDeployed }) {
                   <span className="deploy-result-icon">{r.success ? '✓' : '✕'}</span>
                   <span className="deploy-result-name">{r.filename}</span>
                   {r.manual && <span className="deploy-result-note">marked as deployed</span>}
+                  {r.dest && <span className="deploy-result-note" title={r.dest}>→ {r.dest}</span>}
                   {r.error && <span className="deploy-result-error">{r.error}</span>}
                 </div>
               ))}

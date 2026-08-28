@@ -121,12 +121,12 @@ function registerHandlers() {
   })
 
   // ---- Phase 3: Email fetch ----
-  ipcMain.handle('outlook:fetch', async (_, { appIds, sinceDate }) => {
-    log.info('outlook:fetch called', { appIds, sinceDate })
+  ipcMain.handle('outlook:fetch', async (_, { appIds, sinceDate, toDate }) => {
+    log.info('outlook:fetch called', { appIds, sinceDate, toDate })
     try {
       const { fetchAll } = require('../email/fetchOrchestrator')
       const apps = getAllApps()
-      const result = await fetchAll(appIds, sinceDate, apps)
+      const result = await fetchAll(appIds, sinceDate, apps, toDate)
       log.info('outlook:fetch done', result)
       return result
     } catch (e) {
@@ -157,12 +157,38 @@ function registerHandlers() {
     return applyMerge(patchFileId, mergedContent)
   })
 
+  // ---- Script view / download ----
+  ipcMain.handle('patch:read-script', async (_, { localPath }) => {
+    const fs = require('fs')
+    try {
+      const content = fs.readFileSync(localPath, 'utf8')
+      return { success: true, content }
+    } catch (e) {
+      return { success: false, error: e.message }
+    }
+  })
+
+  ipcMain.handle('patch:open-script', async (_, { localPath }) => {
+    await shell.openPath(localPath)
+    return { success: true }
+  })
+
+  ipcMain.handle('patch:open-content', async (_, { content, filename }) => {
+    const os   = require('os')
+    const path = require('path')
+    const fs   = require('fs')
+    const tmpPath = path.join(os.tmpdir(), filename || 'compiled_scripts.sql')
+    fs.writeFileSync(tmpPath, content, 'utf8')
+    await shell.openPath(tmpPath)
+    return { success: true }
+  })
+
   // ---- Patch delete ----
   ipcMain.handle('patch:delete', async (_, { patchId }) => {
     const patch = getPatchById(patchId)
     if (!patch) return { success: false, error: 'Patch not found' }
     if (patch.status !== 'staged') {
-      return { success: false, error: `Only staged patches can be deleted (current status: ${patch.status})` }
+      return { success: false, error: `Only pending patches can be deleted (current status: ${patch.status})` }
     }
     if (patch.local_folder) {
       const fs   = require('fs')
@@ -203,22 +229,29 @@ function registerHandlers() {
     if (!app) return { success: false, error: 'App not found' }
     if (!app.local_src_path) return { success: false, error: 'local_src_path not configured' }
     if (!app.war_name)       return { success: false, error: 'war_name not configured' }
-    if (!app.remote_war_path) return { success: false, error: 'remote_war_path not configured' }
+    if (!app.app_root_path)  return { success: false, error: 'app_root_path not configured' }
+
+    // Find the most recently deployed patch date for this app (used in backup WAR filename)
+    const db = require('../db/schema').getDb()
+    const lastPatch = db.prepare(
+      `SELECT email_date FROM patches WHERE app_id = ? AND status = 'deployed'
+       ORDER BY deployed_at DESC, email_date DESC LIMIT 1`
+    ).get(appId)
+    const lastPatchDate = lastPatch?.email_date || null
 
     const steps = []
     try {
       steps.push('Building WAR from local source…')
       event.sender.send('war:progress', { step: steps[steps.length - 1] })
-      const localWar = buildWar(app.local_src_path, app.war_name)
+      const localWar = await buildWar(app.local_src_path, app.war_name)
       steps.push(`WAR built: ${localWar}`)
       event.sender.send('war:progress', { step: steps[steps.length - 1] })
 
-      await deployWarSFTP(app, localWar, msg => {
-        steps.push(msg)
-        event.sender.send('war:progress', { step: msg })
-      })
+      await deployWarSFTP(app, localWar, ({ step, pct }) => {
+        if (pct == null) steps.push(step)
+        event.sender.send('war:progress', { step, pct })
+      }, lastPatchDate)
 
-      try { require('fs').unlinkSync(localWar) } catch {}
       log.info('war:deploy success', { appId, steps })
       return { success: true, steps }
     } catch (e) {
@@ -229,17 +262,41 @@ function registerHandlers() {
 
   // ---- Tomcat restart ----
   ipcMain.handle('tomcat:restart', async (_, { appId }) => {
-    const { restartTomcatSSH } = require('../deploy/warEngine')
     const app = getAllApps().find(a => a.id === appId)
     if (!app) return { success: false, error: 'App not found' }
     try {
-      const out = await restartTomcatSSH(app)
+      const { restartTomcatSSH, restartTomcatLocal, restartTomcatRDP } = require('../deploy/warEngine')
+      const mode = (app.deployment_mode || '').toLowerCase()
+      let out
+      if (mode === 'smb') {
+        out = await restartTomcatLocal(app)
+      } else if (mode === 'rdp_assisted' || mode === 'rdp') {
+        out = await restartTomcatRDP(app)
+      } else if (mode === 'sftp') {
+        out = await restartTomcatSSH(app)
+      } else {
+        throw new Error(`Tomcat restart is not supported for deployment mode "${mode}"`)
+      }
       log.info('tomcat:restart success', { appId, out })
       return { success: true, output: out }
     } catch (e) {
       log.error('tomcat:restart failed', e)
+      if (e.needsRdp) {
+        return {
+          success: false, needsRdp: true,
+          rdpHost: e.rdpHost, rdpPort: e.rdpPort,
+          rdpPassword: e.rdpPassword, rdpCommand: e.rdpCommand
+        }
+      }
       return { success: false, error: e.message }
     }
+  })
+
+  ipcMain.handle('rdp:open', async (_, { host, port }) => {
+    const { exec } = require('child_process')
+    const target = port && port !== 3389 ? `${host}:${port}` : host
+    exec(`mstsc /v:${target}`)
+    return { success: true }
   })
 
   // ---- Dev/test: revert deployed patches back to staged ----
@@ -261,9 +318,10 @@ function registerHandlers() {
     const results = []
     for (const patchId of patchIds) {
       try {
-        const preview = previewDeploy(patchId)
-        if (preview.blockedBy && preview.blockedBy.length > 0) {
-          results.push({ patchId, error: `${preview.blockedBy.length} older patch(es) must be deployed first` })
+        const preview = previewDeploy(patchId, { batchPatchIds: patchIds })
+        if (preview.blockedBy?.length > 0) {
+          const subjects = preview.blockedBy.map(p => p.email_subject?.slice(0, 40) || `#${p.id}`).join(', ')
+          results.push({ patchId, error: `Blocked by older undeployed patch(es): ${subjects}` })
           continue
         }
         const fileIds = preview.deployable.map(f => f.id)
@@ -278,6 +336,34 @@ function registerHandlers() {
       }
     }
     return results
+  })
+
+  // ---- Archive patches ----
+  ipcMain.handle('patches:archive', async (_, { patchIds, destDir }) => {
+    const fs   = require('fs')
+    const path = require('path')
+    const AdmZip = require('adm-zip')
+    const db   = require('../db/schema').getDb()
+    const results = []
+    for (const patchId of patchIds) {
+      try {
+        const patch = db.prepare('SELECT * FROM patches WHERE id = ?').get(patchId)
+        if (!patch || !patch.local_folder || !fs.existsSync(patch.local_folder)) {
+          results.push({ patchId, error: 'Patch folder not found' }); continue
+        }
+        const app  = db.prepare('SELECT name FROM apps WHERE id = ?').get(patch.app_id)
+        const date = (patch.email_date || '').slice(0, 10).replace(/-/g, '')
+        const name = `${app?.name || 'patch'}_${date}_${patchId}.zip`
+        const dest = path.join(destDir, name)
+        const zip  = new AdmZip()
+        zip.addLocalFolder(patch.local_folder)
+        zip.writeZip(dest)
+        results.push({ patchId, file: dest, success: true })
+      } catch (e) {
+        results.push({ patchId, error: e.message })
+      }
+    }
+    return { results }
   })
 }
 

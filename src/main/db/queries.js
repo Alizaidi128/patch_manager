@@ -80,7 +80,7 @@ function updatePatch(id, updates) {
 
 function getPendingPatchCount(appId) {
   const row = getDb().prepare(
-    `SELECT COUNT(*) as cnt FROM patches WHERE app_id = ? AND status IN ('staged','ready')`
+    `SELECT COUNT(*) as cnt FROM patches WHERE app_id = ? AND status = 'staged'`
   ).get(appId)
   return row.cnt
 }
@@ -106,9 +106,10 @@ function updatePatchFile(id, updates) {
 // ---- Deployment Log ----
 
 function addLogEntry(entry) {
-  const cols = Object.keys(entry).join(', ')
-  const vals = Object.keys(entry).map(k => `@${k}`).join(', ')
-  getDb().prepare(`INSERT INTO deployment_log (${cols}) VALUES (${vals})`).run(entry)
+  const data = { ...entry, logged_at: new Date().toISOString() } // explicit UTC ISO so JS parses correctly
+  const cols = Object.keys(data).join(', ')
+  const vals = Object.keys(data).map(k => `@${k}`).join(', ')
+  getDb().prepare(`INSERT INTO deployment_log (${cols}) VALUES (${vals})`).run(data)
 }
 
 function getLogEntries(filters = {}) {

@@ -97,6 +97,12 @@ export default function Settings() {
       {/* Actions */}
       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
         <button className="btn btn-primary" onClick={handleSave}>Save Settings</button>
+        <button className="btn btn-secondary" onClick={() => window.api.invoke('updater:check')}>
+          Check for Updates
+        </button>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-secondary)' }}>
+          v{window.api?.appVersion || '—'}
+        </span>
       </div>
 
       {alert && (

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { RocketIcon, FolderIcon } from '../icons.jsx'
 
 const FILE_TYPE_LABEL = {
   gias_patch:  'GIAS',
@@ -11,6 +12,7 @@ const FILE_TYPE_LABEL = {
   unknown:     '?',
 }
 
+// File-level deploy status labels
 const STATUS_LABELS = {
   pending:  'Pending',
   skipped:  'Skipped',
@@ -19,13 +21,23 @@ const STATUS_LABELS = {
   merged:   'Merged',
 }
 
+// Patch-level status labels (staged shows as "Pending" in UI)
+const PATCH_STATUS_LABELS = {
+  staged:   'Pending',
+  deployed: 'Deployed',
+  skipped:  'Skipped',
+  failed:   'Failed',
+}
+
 const MERGE_TYPES = new Set(['xml_merge', 'props_merge'])
 
-function FileRow({ file, onMerge }) {
+function FileRow({ file, onMerge, onViewScript }) {
   const canMerge = MERGE_TYPES.has(file.file_type) &&
                    file.deploy_target_path &&
                    file.deploy_status !== 'deployed' &&
                    file.merge_status   !== 'merged'
+
+  const isCompiledScript = file.file_type === 'db_script' && file.original_filename === 'compiled_scripts.txt'
 
   const statusKey = file.merge_status === 'merged' ? 'merged' : (file.deploy_status || 'pending')
 
@@ -47,6 +59,14 @@ function FileRow({ file, onMerge }) {
       <span className={`status-badge status-${statusKey}`}>
         {STATUS_LABELS[statusKey] || statusKey}
       </span>
+      {isCompiledScript && (
+        <button
+          className="btn btn-script-view btn-sm"
+          onClick={e => { e.stopPropagation(); onViewScript(file) }}
+        >
+          View Script
+        </button>
+      )}
       {canMerge && (
         <button
           className="btn btn-secondary btn-sm file-merge-btn"
@@ -59,7 +79,7 @@ function FileRow({ file, onMerge }) {
   )
 }
 
-export default function PatchRow({ patch, onOpenFolder, onMerge, onDeploy, onDelete, selected, onToggleSelect }) {
+export default function PatchRow({ patch, onOpenFolder, onMerge, onDeploy, onDelete, onViewScript, selected, onToggleSelect }) {
   const [expanded, setExpanded] = useState(false)
   const files = patch.files || []
 
@@ -75,6 +95,11 @@ export default function PatchRow({ patch, onOpenFolder, onMerge, onDeploy, onDel
     f => f.deploy_status === 'deployed' || f.deploy_status === 'skipped' || f.merge_status === 'merged'
   )
 
+  // Find compiled script file to show View Script button in header
+  const compiledScript = files.find(
+    f => f.file_type === 'db_script' && f.original_filename === 'compiled_scripts.txt'
+  )
+
   const fileTypeSummary = [...new Set(files.map(f => f.file_type))]
     .map(t => FILE_TYPE_LABEL[t] || t)
     .join(' · ')
@@ -82,6 +107,8 @@ export default function PatchRow({ patch, onOpenFolder, onMerge, onDeploy, onDel
   const dateStr = patch.email_date
     ? new Date(patch.email_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
     : ''
+
+  const patchStatusLabel = PATCH_STATUS_LABELS[patch.status] || patch.status
 
   function handleDelete(e) {
     e.stopPropagation()
@@ -112,7 +139,16 @@ export default function PatchRow({ patch, onOpenFolder, onMerge, onDeploy, onDel
           <span className="patch-file-types">{fileTypeSummary}</span>
           <span className="patch-file-count">{files.length} file{files.length !== 1 ? 's' : ''}</span>
           <span className="patch-date">{dateStr}</span>
-          <span className={`status-badge status-${patch.status}`}>{patch.status}</span>
+          {compiledScript && (
+            <button
+              className="btn btn-script-view btn-sm"
+              title="View compiled SQL script"
+              onClick={e => { e.stopPropagation(); onViewScript(compiledScript) }}
+            >
+              View Script
+            </button>
+          )}
+          <span className={`status-badge status-${patch.status}`}>{patchStatusLabel}</span>
           {patch.status === 'staged' && (
             <button
               className="btn btn-ghost btn-sm patch-delete-btn"
@@ -128,25 +164,32 @@ export default function PatchRow({ patch, onOpenFolder, onMerge, onDeploy, onDel
           <div className="patch-sender">{patch.email_sender}</div>
           <div className="patch-files-list">
             {files.map(f => (
-              <FileRow key={f.id} file={f} onMerge={file => onMerge(file)} />
+              <FileRow
+                key={f.id}
+                file={f}
+                onMerge={file => onMerge(file)}
+                onViewScript={file => onViewScript(file)}
+              />
             ))}
             {files.length === 0 && <div className="patch-no-files">No files</div>}
           </div>
           <div className="patch-row-actions">
             {patch.local_folder && (
               <button
-                className="btn btn-secondary btn-sm"
+                className="btn btn-secondary btn-sm icon-btn"
                 onClick={() => onOpenFolder(patch.local_folder)}
               >
+                <FolderIcon size={13} />
                 Open Folder
               </button>
             )}
             {!allDone && (
               <button
-                className="btn btn-primary btn-sm"
+                className="btn btn-primary btn-sm icon-btn"
                 onClick={() => onDeploy(patch.id)}
               >
-                🚀 Deploy…
+                <RocketIcon size={13} />
+                Deploy…
               </button>
             )}
             {allDone && (

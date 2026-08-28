@@ -1,6 +1,6 @@
 {
   "name": "patch-manager",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Automated patch management for Outlook-received software patches",
   "main": "electron.js",
   "scripts": {
@@ -15,6 +15,7 @@
     "adm-zip": "^0.5.10",
     "better-sqlite3": "^9.4.3",
     "electron-store": "^8.2.0",
+    "electron-updater": "^6.8.9",
     "fast-xml-parser": "^4.3.4",
     "node-unrar-js": "^2.0.0",
     "ssh2": "^1.15.0",
@@ -54,6 +55,11 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Alizaidi128",
+      "repo": "patch_manager"
     }
   },
   "allowScripts": {

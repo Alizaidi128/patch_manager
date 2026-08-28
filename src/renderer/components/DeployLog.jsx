@@ -104,9 +104,11 @@ export default function DeployLog({ apps }) {
                 <tr key={e.id} className={`log-row log-status-${e.status}`}>
                   <td className="log-time">
                     {new Date(e.logged_at).toLocaleString('en-GB', {
+                      timeZone: 'Asia/Karachi',
                       day: '2-digit', month: 'short',
-                      hour: '2-digit', minute: '2-digit'
-                    })}
+                      hour: '2-digit', minute: '2-digit',
+                      hour12: false
+                    })} <span style={{ opacity: 0.5, fontSize: '0.75em' }}>PKT</span>
                   </td>
                   <td className="log-app">{e.app_name || '—'}</td>
                   <td className="log-action">

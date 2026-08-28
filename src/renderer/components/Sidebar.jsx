@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { InboxIcon, LogIcon, SettingsIcon, SunIcon, MoonIcon, PencilIcon, PlusIcon } from '../icons.jsx'
 
 export default function Sidebar({ apps, selectedAppId, activeView, theme, onToggleTheme, onSelectApp, onEditApp, onAddApp, onNavigate }) {
   const [hoveredId, setHoveredId] = useState(null)
@@ -7,8 +8,8 @@ export default function Sidebar({ apps, selectedAppId, activeView, theme, onTogg
   const inactiveApps = apps.filter(a => !a.is_active)
 
   function AppItem({ app }) {
-    const isActive   = app.id === selectedAppId
-    const isHovered  = app.id === hoveredId
+    const isActive  = app.id === selectedAppId
+    const isHovered = app.id === hoveredId
 
     return (
       <div
@@ -25,7 +26,7 @@ export default function Sidebar({ apps, selectedAppId, activeView, theme, onTogg
             title="Edit app"
             onClick={e => { e.stopPropagation(); onEditApp(app.id) }}
           >
-            ✏️
+            <PencilIcon size={13} />
           </button>
         )}
       </div>
@@ -41,7 +42,7 @@ export default function Sidebar({ apps, selectedAppId, activeView, theme, onTogg
           onClick={onToggleTheme}
           title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         >
-          {theme === 'dark' ? '☀️' : '🌙'}
+          {theme === 'dark' ? <SunIcon size={15} /> : <MoonIcon size={15} />}
         </button>
       </div>
 
@@ -67,8 +68,8 @@ export default function Sidebar({ apps, selectedAppId, activeView, theme, onTogg
         )}
 
         <div className="add-app-row">
-          <button className="btn btn-secondary btn-sm" style={{ width: '100%' }} onClick={onAddApp}>
-            + Add App
+          <button className="btn btn-secondary btn-sm" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} onClick={onAddApp}>
+            <PlusIcon size={13} /> Add App
           </button>
         </div>
       </div>
@@ -78,19 +79,22 @@ export default function Sidebar({ apps, selectedAppId, activeView, theme, onTogg
           className={`sidebar-nav-item${activeView === 'dashboard' ? ' active' : ''}`}
           onClick={() => onNavigate('dashboard')}
         >
-          <span className="nav-icon">📬</span> Dashboard
+          <span className="nav-icon"><InboxIcon size={15} /></span>
+          Dashboard
         </div>
         <div
           className={`sidebar-nav-item${activeView === 'logs' ? ' active' : ''}`}
           onClick={() => onNavigate('logs')}
         >
-          <span className="nav-icon">📋</span> Deploy Log
+          <span className="nav-icon"><LogIcon size={15} /></span>
+          Deploy Log
         </div>
         <div
           className={`sidebar-nav-item${activeView === 'settings' ? ' active' : ''}`}
           onClick={() => onNavigate('settings')}
         >
-          <span className="nav-icon">⚙️</span> Settings
+          <span className="nav-icon"><SettingsIcon size={15} /></span>
+          Settings
         </div>
       </nav>
     </aside>

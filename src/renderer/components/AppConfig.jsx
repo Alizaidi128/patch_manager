@@ -61,7 +61,7 @@ function makeDefault() {
     server_user: '', server_password: '', server_key_path: '',
     app_root_path: '', tomcat_service_name: '', smb_path: '',
     local_src_path: '', war_name: '', remote_war_path: '', tomcat_remote_path: '',
-    sftp_server_path: '',
+    sftp_server_path: '', patch_path: '',
     notes: ''
   }
 }
@@ -205,7 +205,12 @@ export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
               <button
                 key={m.value}
                 className={`tab-btn${form.deployment_mode === m.value ? ' active' : ''}`}
-                onClick={() => { set('deployment_mode', m.value); setTestResult(null) }}
+                onClick={() => {
+                set('deployment_mode', m.value)
+                setTestResult(null)
+                if (m.value === 'rdp_assisted' && (!form.server_port || form.server_port === 22)) set('server_port', 3389)
+                if (m.value === 'sftp' && (!form.server_port || form.server_port === 3389)) set('server_port', 22)
+              }}
               >
                 {m.label}
               </button>
@@ -213,32 +218,39 @@ export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
           </div>
         </div>
 
-        {/* SMB fields */}
+        {/* SMB / Local (Windows) fields */}
         {form.deployment_mode === 'smb' && (
           <>
             <div className="form-group">
-              <label>Network Share Path</label>
+              <label>App Folder Path</label>
               <input
                 type="text" className="form-control mono" style={{ fontSize: 12 }}
                 value={form.smb_path}
                 onChange={e => set('smb_path', e.target.value)}
-                placeholder="\\192.168.1.10\E$\apps\CONVUAT"
+                placeholder="D:\apps\CONVUAT  or  \\server\E$\apps\CONVUAT"
               />
-              <p className="form-hint">UNC path to the app root on the server. Can also be a local path if on the same machine.</p>
+              <p className="form-hint">
+                Path to the app folder on this machine. Use a local path (e.g. <code>D:\apps\CONVUAT</code>) when
+                Patch Manager runs on the server itself, or a UNC path if deploying over the network.
+              </p>
             </div>
 
             <div className="form-group">
-              <label>App Root Path <span className="label-note">(server-side, for log reference)</span></label>
+              <label>Patch Path <span className="label-note">(optional)</span></label>
               <input
                 type="text" className="form-control mono" style={{ fontSize: 12 }}
-                value={form.app_root_path}
-                onChange={e => set('app_root_path', e.target.value)}
-                placeholder="E:\apps\CONVUAT"
+                value={form.patch_path || ''}
+                onChange={e => set('patch_path', e.target.value)}
+                placeholder="D:\Patches_automated"
               />
+              <p className="form-hint">
+                Where fetched patches are saved for this app. Overrides the global patch root from Settings.
+                Leave blank to use the global setting.
+              </p>
             </div>
 
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label>Tomcat Service Name</label>
+              <label>Tomcat Service Name <span className="label-note">(optional)</span></label>
               <input
                 type="text" className="form-control"
                 style={{ maxWidth: 200 }}
@@ -247,7 +259,8 @@ export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
                 placeholder="Tomcat9"
               />
               <p className="form-hint">
-                Used for <code>net stop / net start</code> after deployment. Leave blank to skip Tomcat restart.
+                Windows service name. "Restart Tomcat" runs <code>net stop</code> then <code>net start</code> locally.
+                Leave blank to skip Tomcat restart.
               </p>
             </div>
           </>
@@ -320,12 +333,12 @@ export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
             </div>
 
             <div className="form-group">
-              <label>App Root Path <span className="label-note">(on Linux server)</span></label>
+              <label>App Root Path <span className="label-note">(on Linux server — also used as WAR destination)</span></label>
               <input
                 type="text" className="form-control mono" style={{ fontSize: 12 }}
                 value={form.app_root_path}
                 onChange={e => set('app_root_path', e.target.value)}
-                placeholder="/opt/tomcat/webapps/CONVUAT"
+                placeholder="/u01/opt/APP_TEST"
               />
             </div>
 
@@ -351,7 +364,7 @@ export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
           <div className="settings-subsection">
             <h4>WAR Deployment</h4>
             <p className="form-hint" style={{ marginBottom: 12 }}>
-              Used for the "Deploy WAR" button — zips your local source folder and uploads it as a WAR file.
+              Patch files are copied into the Local Source Folder below. "Deploy WAR" zips it and uploads to App Root Path on the Linux server.
             </p>
 
             <div className="form-group">
@@ -371,27 +384,16 @@ export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
               <p className="form-hint">Local Windows folder whose contents are zipped into the WAR.</p>
             </div>
 
-            <div className="form-grid-2" style={{ marginBottom: 14 }}>
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <label>WAR Name</label>
-                <input
-                  type="text" className="form-control mono"
-                  value={form.war_name || ''}
-                  onChange={e => set('war_name', e.target.value)}
-                  placeholder="CONVUAT"
-                />
-                <p className="form-hint">Filename without .war extension.</p>
-              </div>
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <label>Remote WAR Directory</label>
-                <input
-                  type="text" className="form-control mono" style={{ fontSize: 12 }}
-                  value={form.remote_war_path || ''}
-                  onChange={e => set('remote_war_path', e.target.value)}
-                  placeholder="/u01/opt/APP"
-                />
-                <p className="form-hint">Remote folder that contains the WAR file.</p>
-              </div>
+            <div className="form-group" style={{ marginBottom: 14 }}>
+              <label>WAR Name</label>
+              <input
+                type="text" className="form-control mono"
+                style={{ maxWidth: 240 }}
+                value={form.war_name || ''}
+                onChange={e => set('war_name', e.target.value)}
+                placeholder="CONVUAT"
+              />
+              <p className="form-hint">Filename without .war extension. WAR is uploaded to the App Root Path above.</p>
             </div>
 
             <div className="form-group" style={{ marginBottom: 0 }}>
@@ -413,18 +415,81 @@ export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
         {/* RDP-Assisted fields */}
         {form.deployment_mode === 'rdp_assisted' && (
           <>
-            <div className="form-group">
-              <label>App Root Path <span className="label-note">(reference — used to structure staging folder)</span></label>
+            <div className="cred-card">
+              <div className="cred-card-title">SERVER — WINDOWS (REMOTE DESKTOP)</div>
+              <div className="form-grid-2" style={{ marginBottom: 14 }}>
+                <CredField label="HOST"
+                  value={form.server_host}
+                  onChange={v => set('server_host', v)}
+                  placeholder="10.10.2.130"
+                  canCopy
+                />
+                <CredField label="PORT"
+                  value={String(form.server_port || 3389)}
+                  onChange={v => set('server_port', parseInt(v, 10) || 3389)}
+                  placeholder="3389"
+                  canCopy
+                />
+              </div>
+              <div className="form-grid-2" style={{ marginBottom: 0 }}>
+                <CredField label="USERNAME"
+                  value={form.server_user}
+                  onChange={v => set('server_user', v)}
+                  placeholder="App.Admin"
+                  canCopy
+                />
+                <CredField label="PASSWORD"
+                  value={form.server_password}
+                  onChange={v => set('server_password', v)}
+                  type="password"
+                  canCopy
+                />
+              </div>
+              <p className="form-hint" style={{ marginTop: 8 }}>
+                Credentials are shown as a copy-paste hint in the deploy dialog when Windows prompts for authentication.
+                Patch Manager also runs <code>net use \\host</code> automatically before copying files.
+              </p>
+            </div>
+
+            <div className="form-group" style={{ marginTop: 14 }}>
+              <label>App Folder Path (Network Share)</label>
               <input
                 type="text" className="form-control mono" style={{ fontSize: 12 }}
-                value={form.app_root_path}
-                onChange={e => set('app_root_path', e.target.value)}
-                placeholder="E:\apps\CONVUAT  or  /opt/tomcat/webapps/CONVUAT"
+                value={form.smb_path || ''}
+                onChange={e => set('smb_path', e.target.value)}
+                placeholder="\\10.10.2.130\APPLICATION\CONVUAT"
               />
+              <p className="form-hint">UNC path to the app folder on the remote server.</p>
             </div>
-            <div className="alert alert-info" style={{ marginTop: 0 }}>
-              Patch Manager prepares a local staging folder mirroring the app root, then opens it in Explorer.
-              You RDP into the server, copy the files, restart Tomcat, then click "Mark as Deployed."
+
+            <div className="form-group">
+              <label>Patch Path <span className="label-note">(optional)</span></label>
+              <input
+                type="text" className="form-control mono" style={{ fontSize: 12 }}
+                value={form.patch_path || ''}
+                onChange={e => set('patch_path', e.target.value)}
+                placeholder="\\10.10.2.130\Patches_automated"
+              />
+              <p className="form-hint">
+                Where fetched patches are saved for this app. Use a UNC path so patches land
+                directly on the server share. Overrides the global patch root. Leave blank to use the global setting.
+              </p>
+            </div>
+
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label>Tomcat Service Name <span className="label-note">(optional)</span></label>
+              <input
+                type="text" className="form-control"
+                style={{ maxWidth: 200 }}
+                value={form.tomcat_service_name || ''}
+                onChange={e => set('tomcat_service_name', e.target.value)}
+                placeholder="Tomcat9"
+              />
+              <p className="form-hint">
+                Windows service name used for <code>sc \\host stop/start</code>.
+                For Tomcat 11 installed via the Windows installer the service name is usually <strong>Tomcat11</strong>.
+                To confirm: run <code>sc query type= all state= all</code> on the server and look for the Tomcat entry.
+              </p>
             </div>
           </>
         )}

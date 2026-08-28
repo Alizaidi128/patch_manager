@@ -17,8 +17,14 @@ function rotate() {
   } catch {}
 }
 
+function pktNow() {
+  // PKT = UTC+5, no DST
+  const pkt = new Date(Date.now() + 5 * 60 * 60 * 1000)
+  return pkt.toISOString().slice(0, 19).replace('T', ' ') + ' PKT'
+}
+
 function write(level, ...args) {
-  const ts = new Date().toISOString()
+  const ts = pktNow()
   const msg = args.map(a =>
     a instanceof Error ? `${a.message}\n${a.stack}` :
     typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)

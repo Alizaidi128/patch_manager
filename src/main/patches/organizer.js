@@ -19,10 +19,12 @@ function getNextSequenceFolder(dateFolder) {
   return existing.length === 0 ? 1 : Math.max(...existing) + 1
 }
 
-function createPatchFolder(emailDate) {
-  const root       = getPatchRootDir()
-  const dateStr    = formatDateFolder(emailDate || new Date())
-  const dateFolder = path.join(root, dateStr)
+function createPatchFolder(emailDate, appName, rootOverride) {
+  const root    = rootOverride || getPatchRootDir()
+  const dateStr = formatDateFolder(emailDate || new Date())
+  const safeApp = (appName || 'UNKNOWN').replace(/[\\/:*?"<>|]/g, '_').trim() || 'UNKNOWN'
+  // Structure: {root}/{APP_NAME}/{date}/{seq}
+  const dateFolder = path.join(root, safeApp, dateStr)
   const seq        = getNextSequenceFolder(dateFolder)
   const seqFolder  = path.join(dateFolder, String(seq))
   fs.mkdirSync(seqFolder, { recursive: true })

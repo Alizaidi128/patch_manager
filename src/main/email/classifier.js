@@ -7,8 +7,11 @@ function classifyAttachment(filename) {
   const lower = filename.toLowerCase()
   const ext   = path.extname(lower)
 
-  // GIAS reserved-folder archive — must check first
-  if (lower.includes('gias_reserved_folders') && (ext === '.zip' || ext === '.rar')) return 'gias_patch'
+  // GIAS deployment archive (class/JSP files to copy directly to app)
+  if (lower.includes('gias') && lower.includes('reserved_folder') && (ext === '.zip' || ext === '.rar')) return 'gias_patch'
+
+  // All other archives — extract and classify contents (scripts, merge files, JSP, etc.)
+  if (ext === '.zip' || ext === '.rar') return 'inspect_archive'
 
   // Images — ignored entirely (caller skips these)
   if (IMAGE_EXTS.has(ext)) return 'image'

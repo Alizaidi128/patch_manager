@@ -34,6 +34,18 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
     try {
       const filters = tab !== 'all' ? { status: tab } : {}
       const rows = await window.api.invoke('patch:list', { appId: app.id, ...filters })
+
+      // Auto-detect deployment status by comparing file dates with the app directory
+      const stagedIds = rows.filter(p => p.status === 'staged').map(p => p.id)
+      if (stagedIds.length) {
+        const { updated } = await window.api.invoke('patch:auto-detect-status', { patchIds: stagedIds })
+        if (updated.length > 0) {
+          const refreshed = await window.api.invoke('patch:list', { appId: app.id, ...filters })
+          setPatches(refreshed)
+          return
+        }
+      }
+
       setPatches(rows)
     } finally {
       setLoading(false)
@@ -93,6 +105,11 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
       },
       { confirmLabel: 'Delete', danger: true }
     )
+  }
+
+  async function handleMarkDeployed(patchId) {
+    await window.api.invoke('patch:mark-deployed', { patchId })
+    load()
   }
 
   async function handleDeploySelected() {
@@ -423,6 +440,20 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
           </div>
         )}
 
+        {patches.length > 0 && (
+          <div className="patch-list-header">
+            <span className="patch-list-header-subject">Subject</span>
+            <div className="patch-list-header-meta">
+              <span style={{ width: 90, textAlign: 'right', flexShrink: 0 }}>Type</span>
+              <span style={{ width: 44, textAlign: 'right', flexShrink: 0 }}>Files</span>
+              <span style={{ width: 90, textAlign: 'right', flexShrink: 0 }}>Date</span>
+              <span style={{ width: 72, textAlign: 'right', flexShrink: 0 }}>Time</span>
+              <span style={{ width: 90, flexShrink: 0 }}></span>
+              <span style={{ width: 70, textAlign: 'right', flexShrink: 0 }}>Status</span>
+            </div>
+          </div>
+        )}
+
         {patches.map(p => (
           <PatchRow
             key={p.id}
@@ -433,7 +464,9 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
             onMerge={file => onMerge({ patchFileId: file.id, filename: file.original_filename, fileType: file.file_type })}
             onDeploy={patchId => onDeploy(patchId)}
             onDelete={handleDelete}
+            onMarkDeployed={handleMarkDeployed}
             onViewScript={file => setScriptFile(file)}
+            onPathSaved={load}
           />
         ))}
       </div>

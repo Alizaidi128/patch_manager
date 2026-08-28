@@ -35,7 +35,7 @@ function sftpOpts(app) {
 }
 
 async function readFromServer(app, remotePath) {
-  if (app.deployment_mode === 'smb') {
+  if (app.deployment_mode === 'smb' || app.deployment_mode === 'rdp_assisted') {
     if (!fs.existsSync(remotePath)) throw new Error(`File not found on server: ${remotePath}`)
     return fs.readFileSync(remotePath, 'utf8')
   }
@@ -57,13 +57,13 @@ async function readFromServer(app, remotePath) {
     }
   }
 
-  throw new Error('Merge is not available for RDP-assisted deployment mode.')
+  throw new Error(`Merge is not available for deployment mode: ${app.deployment_mode}`)
 }
 
 async function writeToServer(app, remotePath, content) {
   const ts = Date.now()
 
-  if (app.deployment_mode === 'smb') {
+  if (app.deployment_mode === 'smb' || app.deployment_mode === 'rdp_assisted') {
     const bak = `${remotePath}.bak-${ts}`
     if (fs.existsSync(remotePath)) fs.copyFileSync(remotePath, bak)
     fs.mkdirSync(path.dirname(remotePath), { recursive: true })
@@ -91,6 +91,21 @@ async function writeToServer(app, remotePath, content) {
   }
 }
 
+// If the stored deploy_target_path is a directory, append the original filename.
+function resolveFilePath(deployTargetPath, originalFilename) {
+  try {
+    if (fs.existsSync(deployTargetPath) && fs.statSync(deployTargetPath).isDirectory()) {
+      return path.join(deployTargetPath, originalFilename)
+    }
+  } catch {}
+  // Also treat as directory if it ends with a path separator or has no extension
+  if (deployTargetPath.endsWith('\\') || deployTargetPath.endsWith('/') ||
+      !path.extname(deployTargetPath)) {
+    return path.join(deployTargetPath, originalFilename)
+  }
+  return deployTargetPath
+}
+
 // ---- Public API ----
 
 async function previewMerge(patchFileId) {
@@ -101,8 +116,9 @@ async function previewMerge(patchFileId) {
   if (!file.local_path || !fs.existsSync(file.local_path))
     throw new Error(`Local patch file not found: ${file.local_path}`)
 
+  const resolvedPath = resolveFilePath(file.deploy_target_path, file.original_filename)
   const snippet  = fs.readFileSync(file.local_path, 'utf8')
-  const existing = await readFromServer(app, file.deploy_target_path)
+  const existing = await readFromServer(app, resolvedPath)
 
   let preview, mergedContent
   if (file.file_type === 'xml_merge') {
@@ -120,14 +136,15 @@ async function previewMerge(patchFileId) {
     mergedContent,
     fileType:   file.file_type,
     filename:   file.original_filename,
-    deployPath: file.deploy_target_path
+    deployPath: resolvedPath
   }
 }
 
 async function applyMerge(patchFileId, mergedContent) {
   const { file, patch, app } = getFileWithContext(patchFileId)
 
-  await writeToServer(app, file.deploy_target_path, mergedContent)
+  const resolvedPath = resolveFilePath(file.deploy_target_path, file.original_filename)
+  await writeToServer(app, resolvedPath, mergedContent)
 
   updatePatchFile(patchFileId, { merge_status: 'merged', deploy_status: 'deployed' })
 
@@ -137,7 +154,7 @@ async function applyMerge(patchFileId, mergedContent) {
     appId:       patch.app_id,
     action:      'merge',
     status:      'success',
-    detail:      `Merged ${file.original_filename} → ${file.deploy_target_path}`
+    detail:      `Merged ${file.original_filename} → ${resolvedPath}`
   })
 
   return { success: true }

@@ -206,6 +206,42 @@ function registerHandlers() {
     return { success: true }
   })
 
+  // ---- Auto-detect deployed status by comparing file dates with app directory ----
+  ipcMain.handle('patch:auto-detect-status', async (_, { patchIds }) => {
+    const { checkDeploymentStatus } = require('../deploy/deployEngine')
+    const db = require('../db/schema').getDb()
+    const autoDeployed = []
+
+    for (const patchId of patchIds) {
+      const results = checkDeploymentStatus(patchId)
+      if (!results.length) continue
+
+      // Only auto-mark if every checked file is deployed
+      const allDeployed = results.every(r => r.status === 'deployed')
+      for (const r of results) {
+        if (r.status === 'deployed') {
+          db.prepare(`UPDATE patch_files SET deploy_status = 'deployed' WHERE id = ? AND deploy_status = 'pending'`).run(r.fileId)
+        }
+      }
+      if (allDeployed) {
+        db.prepare(`UPDATE patches SET status = 'deployed', deployed_at = datetime('now') WHERE id = ? AND status = 'staged'`).run(patchId)
+        autoDeployed.push(patchId)
+      }
+    }
+
+    return { updated: autoDeployed }
+  })
+
+  // ---- Mark patch as deployed (for patches already deployed outside the app) ----
+  ipcMain.handle('patch:mark-deployed', async (_, { patchId }) => {
+    const patch = getPatchById(patchId)
+    if (!patch) return { success: false, error: 'Patch not found' }
+    const db = require('../db/schema').getDb()
+    db.prepare(`UPDATE patches SET status = 'deployed', deployed_at = datetime('now') WHERE id = ?`).run(patchId)
+    db.prepare(`UPDATE patch_files SET deploy_status = 'deployed' WHERE patch_id = ? AND deploy_status = 'pending'`).run(patchId)
+    return { success: true }
+  })
+
   // ---- Phase 5: Deployment engine ----
   ipcMain.handle('deploy:preview', async (_, { patchId }) => {
     const { previewDeploy } = require('../deploy/deployEngine')

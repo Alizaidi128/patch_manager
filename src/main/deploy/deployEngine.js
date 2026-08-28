@@ -204,7 +204,9 @@ async function deployGiasSFTP(extractedDir, appRootPath, app) {
 async function restartTomcatSFTP(app) {
   const { Client } = require('ssh2')
   const name = app.tomcat_service_name || 'tomcat'
-  const cmd  = `sudo systemctl restart ${name} 2>&1 || sudo service ${name} restart 2>&1`
+  const cmd  = app.tomcat_restart_cmd
+    ? app.tomcat_restart_cmd
+    : `sudo systemctl restart ${name} 2>&1 || sudo service ${name} restart 2>&1`
   return new Promise((resolve, reject) => {
     const conn = new Client()
     let out = ''
@@ -525,4 +527,52 @@ function markManual({ patchId, fileIds }) {
   return { success: true }
 }
 
-module.exports = { previewDeploy, executeDeploy, markManual }
+// Check each staged patch's files against the deployed app directory.
+// Returns array of { fileId, status: 'deployed'|'pending' } for files that have a deploy target.
+// 'deployed'  → app file exists and its mtime >= patch file mtime (patch already applied)
+// 'pending'   → patch file is newer than app file, or app file is missing
+function checkDeploymentStatus(patchId) {
+  try {
+    const { patch, app, files } = getContext(patchId)
+    if (patch.status !== 'staged') return []
+    const deployRoot = localDeployRoot(app)
+    const results = []
+
+    for (const f of files) {
+      if (f.deploy_status !== 'pending') continue
+
+      if (f.file_type === 'gias_patch' && f.local_path) {
+        if (!deployRoot) continue
+        const extractedDir = path.join(path.dirname(f.local_path), 'extracted')
+        if (!fs.existsSync(extractedDir)) continue
+        const dRoot    = giasDeployRoot(extractedDir)
+        const srcFiles = walkDir(dRoot)
+        if (!srcFiles.length) continue
+
+        const allDeployed = srcFiles.every(src => {
+          const dest = path.join(deployRoot, path.relative(dRoot, src))
+          if (!fs.existsSync(dest)) return false
+          try {
+            return fs.statSync(dest).mtimeMs >= fs.statSync(src).mtimeMs
+          } catch { return false }
+        })
+        results.push({ fileId: f.id, status: allDeployed ? 'deployed' : 'pending' })
+        continue
+      }
+
+      if (f.deploy_target_path && f.local_path &&
+          f.file_type !== 'db_script' && f.file_type !== 'reference') {
+        const dest = resolveDestSMB(f, app, null)
+        if (!dest || !fs.existsSync(dest)) { results.push({ fileId: f.id, status: 'pending' }); continue }
+        try {
+          const deployed = fs.statSync(dest).mtimeMs >= fs.statSync(f.local_path).mtimeMs
+          results.push({ fileId: f.id, status: deployed ? 'deployed' : 'pending' })
+        } catch { results.push({ fileId: f.id, status: 'pending' }) }
+      }
+    }
+
+    return results
+  } catch { return [] }
+}
+
+module.exports = { previewDeploy, executeDeploy, markManual, checkDeploymentStatus }

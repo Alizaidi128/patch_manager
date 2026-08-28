@@ -7,10 +7,29 @@ const { classifyAttachment }           = require('./classifier')
 const { extractDeploymentPaths }       = require('./pathParser')
 const { createPatchFolder }            = require('../patches/organizer')
 const { extract }                      = require('../patches/extractor')
-const { logDeployment }                = require('../utils/logger')
+const log                              = require('../utils/logger')
+const { logDeployment }                = log
 
 // SQL keyword pattern — used to detect scripts in email body and text attachments
 const SQL_KW = /\b(?:DROP|CREATE|ALTER|INSERT|UPDATE|DELETE|MERGE|TRUNCATE|SELECT\s+\*|BEGIN|COMMIT|ROLLBACK|GRANT|REVOKE|EXECUTE|DECLARE|CALL)\b/i
+
+// Strip quoted reply content from email body so we only extract SQL from the LATEST email,
+// not from older messages in the thread that appear as quoted text.
+function stripEmailQuotes(body) {
+  if (!body) return body
+  // Outlook plain-text reply delimiter: blank line then "From: " (start of quoted header)
+  const patterns = [
+    /\r?\n\r?\n[ \t]*From[ \t]*:[ \t]/i,           // blank line + "From:"
+    /\r?\n[ \t]*-{4,}[ \t]*Original Message[ \t]*-{4,}/i,  // -----Original Message-----
+    /\r?\n[ \t]*_{4,}/i,                            // ____ divider (Outlook mobile)
+  ]
+  let cutAt = body.length
+  for (const p of patterns) {
+    const m = body.search(p)
+    if (m !== -1 && m < cutAt) cutAt = m
+  }
+  return body.slice(0, cutAt)
+}
 
 function extractBodyScript(rawBody) {
   if (!rawBody || !SQL_KW.test(rawBody)) return null
@@ -103,8 +122,8 @@ function regenerateCompiledScript(patchId, localFolder, email, db) {
 
   const scriptFiles = []
 
-  // Re-extract from email body
-  const bodyScript = extractBodyScript(email.body || '')
+  // Re-extract from email body — strip quoted replies first
+  const bodyScript = extractBodyScript(stripEmailQuotes(email.body || ''))
   if (bodyScript) scriptFiles.push({ filename: '(email body)', content: bodyScript })
 
   // Re-read existing SQL attachments already saved to disk
@@ -131,13 +150,25 @@ function regenerateCompiledScript(patchId, localFolder, email, db) {
   })
 }
 
+function walkDir(dir, acc = []) {
+  try {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) walkDir(full, acc)
+      else acc.push(full)
+    }
+  } catch {}
+  return acc
+}
+
 function needsPath(fileType) {
   return fileType === 'jsp' || fileType === 'js_file' || fileType === 'xml_merge' || fileType === 'props_merge'
 }
 
 async function fetchForApp(app, sinceDate, toDate) {
   const db = getDb()
-  let fetched  = 0
+  let fetched    = 0
+  let duplicates = 0
   const missingPaths = []
 
   // If patch_path is a UNC share, authenticate it before creating any folders
@@ -153,20 +184,35 @@ async function fetchForApp(app, sinceDate, toDate) {
     throw new Error(`${app.name}: ${e.message}`)
   }
 
+  log.info(`[fetch:${app.name}] PS returned ${emails.length} email(s) for ${sinceDate}→${toDate}`)
+
+  // Process in chronological order so folder sequence numbers match arrival order
+  emails.sort((a, b) => (a.receivedTime || '').localeCompare(b.receivedTime || ''))
+
   for (const email of emails) {
+    const subj = email.subject || '(no subject)'
+    log.info(`[fetch:${app.name}] Processing: "${subj}" received=${email.receivedTime}`)
+
     // Skip already-processed emails, but regenerate compiled_scripts.txt with latest logic
     if (email.entryId) {
       const dup = db.prepare(
         'SELECT id, local_folder FROM patches WHERE app_id = ? AND email_entry_id = ?'
       ).get(app.id, email.entryId)
       if (dup) {
+        log.info(`[fetch:${app.name}] SKIP duplicate entryId — patchId=${dup.id}`)
         regenerateCompiledScript(dup.id, dup.local_folder, email, db)
+        duplicates++
         continue
       }
     }
 
     const atts = email.attachments || []
-    if (!atts.length) continue
+    log.info(`[fetch:${app.name}] Attachments (${atts.length}): ${atts.map(a => a.filename).join(', ') || '(none)'}`)
+
+    if (!atts.length) {
+      log.info(`[fetch:${app.name}] SKIP no attachments`)
+      continue
+    }
 
     // Pre-classify to skip emails that only have images / no actionable files
     const classified = atts
@@ -174,10 +220,24 @@ async function fetchForApp(app, sinceDate, toDate) {
       .map(a => ({ ...a, fileType: classifyAttachment(a.filename) }))
       .filter(a => a.fileType !== 'image')  // ignore images entirely
 
-    if (!classified.length) continue
+    log.info(`[fetch:${app.name}] Classified (non-image): ${classified.map(a => `${a.filename}=${a.fileType}`).join(', ') || '(none)'}`)
 
-    const ticketRef   = extractTicketRef(email.subject)
-    const localFolder = createPatchFolder(email.receivedTime, app.name, app.patch_path || null)
+    if (!classified.length) {
+      log.info(`[fetch:${app.name}] SKIP all attachments are images`)
+      continue
+    }
+
+    const ticketRef = extractTicketRef(email.subject)
+
+    // Determine chronological rank among patches for this app on this date
+    // so folder numbers match email arrival order regardless of fetch order
+    const emailDateDay = (email.receivedTime || '').slice(0, 10)
+    const rankRow = db.prepare(
+      `SELECT COUNT(*) as cnt FROM patches WHERE app_id = ? AND substr(email_date, 1, 10) = ? AND email_date < ?`
+    ).get(app.id, emailDateDay, email.receivedTime)
+    const seqHint = (rankRow?.cnt || 0) + 1
+
+    const localFolder = createPatchFolder(email.receivedTime, app.name, app.patch_path || null, seqHint)
     const patchId     = createPatch({
       app_id:         app.id,
       email_entry_id: email.entryId || null,
@@ -194,8 +254,8 @@ async function fetchForApp(app, sinceDate, toDate) {
     // { filename, savePath?, content? } — items to include in compiled_scripts.txt
     const scriptFiles = []
 
-    // Check email body for SQL scripts first
-    const bodyScript = extractBodyScript(email.body || '')
+    // Check email body for SQL scripts — strip quoted replies first
+    const bodyScript = extractBodyScript(stripEmailQuotes(email.body || ''))
     if (bodyScript) {
       scriptFiles.push({ filename: '(email body)', content: bodyScript })
     }
@@ -229,6 +289,62 @@ async function fetchForApp(app, sinceDate, toDate) {
             local_path: savePath, file_type: 'reference',
             deploy_status: 'skipped', merge_status: null, deploy_target_path: null
           })
+        }
+        continue
+      }
+
+      // Extract and inspect non-deployment archives (scripts, merge files, JSP inside a zip/rar)
+      if (fileType === 'inspect_archive') {
+        const baseName  = path.basename(att.filename, path.extname(att.filename))
+        const extractDir = path.join(localFolder, `inspected_${baseName}`)
+        try {
+          await extract(savePath, extractDir)
+        } catch (e) {
+          logDeployment({ patchId, appId: app.id, action: 'inspect_archive', status: 'failed', detail: `${att.filename}: ${e.message}` })
+          createPatchFile({ patch_id: patchId, original_filename: att.filename, local_path: savePath, file_type: 'reference', deploy_status: 'skipped', merge_status: null, deploy_target_path: null })
+          continue
+        }
+
+        const innerFiles = walkDir(extractDir)
+        if (!innerFiles.length) {
+          createPatchFile({ patch_id: patchId, original_filename: att.filename, local_path: savePath, file_type: 'reference', deploy_status: 'skipped', merge_status: null, deploy_target_path: null })
+          continue
+        }
+
+        for (const innerPath of innerFiles) {
+          const innerName = path.basename(innerPath)
+          const innerType = classifyAttachment(innerName)
+          if (innerType === 'image' || innerType === 'inspect_archive' || innerType === 'gias_patch') continue
+
+          if (innerType === 'db_script') {
+            let rawContent = ''
+            try { rawContent = fs.readFileSync(innerPath, 'utf8') } catch {}
+            const extracted = extractBodyScript(rawContent)
+            if (extracted) {
+              scriptFiles.push({ filename: `${att.filename}/${innerName}`, content: extracted })
+            } else if (hasSqlContent(rawContent)) {
+              scriptFiles.push({ filename: `${att.filename}/${innerName}`, savePath: innerPath })
+            } else {
+              createPatchFile({ patch_id: patchId, original_filename: innerName, local_path: innerPath, file_type: 'reference', deploy_status: 'skipped', merge_status: null, deploy_target_path: null })
+            }
+            continue
+          }
+
+          const mergeStatus  = (innerType === 'xml_merge' || innerType === 'props_merge') ? 'pending' : null
+          const deployStatus = innerType === 'reference' ? 'skipped' : 'pending'
+          const detectedPaths = extractDeploymentPaths(email.body || '')
+          const deployPath = detectedPaths.length > 0 ? detectedPaths[0].path : null
+          const confidence = detectedPaths.length > 0 ? detectedPaths[0].confidence : null
+
+          const patchFileId = createPatchFile({
+            patch_id: patchId, original_filename: innerName, local_path: innerPath,
+            file_type: innerType, deploy_status: deployStatus,
+            merge_status: mergeStatus, deploy_target_path: deployPath
+          })
+
+          if (needsPath(innerType) && (!deployPath || confidence === 'low')) {
+            missingPaths.push({ patchFileId, patchId, appId: app.id, appName: app.name, filename: innerName, fileType: innerType, ticketRef, emailSubject: email.subject, emailBody: (email.body || '').slice(0, 800).trim(), detectedPath: deployPath, confidence })
+          }
         }
         continue
       }
@@ -310,27 +426,29 @@ async function fetchForApp(app, sinceDate, toDate) {
     fetched++
   }
 
-  return { fetched, missingPaths }
+  return { fetched, duplicates, missingPaths }
 }
 
 async function fetchAll(appIds, sinceDate, allApps, toDate) {
-  let totalFetched = 0
-  let allMissing   = []
-  const errors     = []
+  let totalFetched    = 0
+  let totalDuplicates = 0
+  let allMissing      = []
+  const errors        = []
 
   for (const appId of appIds) {
     const app = allApps.find(a => a.id === appId)
     if (!app) continue
     try {
-      const { fetched, missingPaths } = await fetchForApp(app, sinceDate, toDate)
-      totalFetched += fetched
-      allMissing    = allMissing.concat(missingPaths)
+      const { fetched, duplicates, missingPaths } = await fetchForApp(app, sinceDate, toDate)
+      totalFetched    += fetched
+      totalDuplicates += (duplicates || 0)
+      allMissing       = allMissing.concat(missingPaths)
     } catch (e) {
       errors.push({ appId, appName: app.name, error: e.message })
     }
   }
 
-  return { fetched: totalFetched, missingPaths: allMissing, errors }
+  return { fetched: totalFetched, duplicates: totalDuplicates, missingPaths: allMissing, errors }
 }
 
 module.exports = { fetchAll, fetchForApp }

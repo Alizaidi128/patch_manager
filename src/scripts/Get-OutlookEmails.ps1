@@ -5,11 +5,24 @@ param(
   [int]$MaxEmails = 100
 )
 
+# Check Outlook process first (works regardless of COM bitness)
+$outlookProc = Get-Process outlook -ErrorAction SilentlyContinue
+if (-not $outlookProc) {
+  Write-Error "OUTLOOK_NOT_RUNNING"
+  exit 1
+}
+
+# Attach to the running Outlook instance via COM
 try {
   $outlook = [Runtime.InteropServices.Marshal]::GetActiveObject("Outlook.Application")
 } catch {
-  Write-Error "OUTLOOK_NOT_RUNNING"
-  exit 1
+  # GetActiveObject fails on bitness mismatch (32-bit Outlook + 64-bit PS) — fall back to New-Object
+  try {
+    $outlook = New-Object -ComObject Outlook.Application
+  } catch {
+    Write-Error "OUTLOOK_NOT_RUNNING"
+    exit 1
+  }
 }
 
 $namespace = $outlook.GetNamespace("MAPI")
@@ -47,7 +60,7 @@ $toEnd  = if ($ToDate -ne "") { [DateTime]::Parse($ToDate).AddDays(1) } else { [
 $results = @()
 
 foreach ($mail in $folder.Items) {
-  if ($mail.Class -ne 43) { continue }   # 43 = olMail
+  if ($mail.Class -ne 43) { continue }
   if ($mail.ReceivedTime -lt $since) { continue }
   if ($mail.ReceivedTime -ge $toEnd) { continue }
 
@@ -66,8 +79,6 @@ foreach ($mail in $folder.Items) {
     sender         = $mail.SenderEmailAddress
     senderName     = $mail.SenderName
     receivedTime   = $mail.ReceivedTime.ToString("yyyy-MM-ddTHH:mm:ss")
-    body           = $mail.Body
-    htmlBody       = $mail.HTMLBody
     hasAttachments = ($mail.Attachments.Count -gt 0)
     attachments    = $attachments
     folder         = $FolderPath
@@ -76,4 +87,8 @@ foreach ($mail in $folder.Items) {
   if ($results.Count -ge $MaxEmails) { break }
 }
 
-$results | ConvertTo-Json -Depth 5
+try {
+  $results | ConvertTo-Json -Depth 5
+} catch {
+  Write-Error "CONVERT_ERROR: $_"
+}

@@ -53,9 +53,23 @@ export default function Sidebar({ apps, selectedAppId, activeView, theme, onTogg
           <>
             <div className="app-section-label">Inactive</div>
             {inactiveApps.map(a => (
-              <div key={a.id} className="app-item inactive">
+              <div
+                key={a.id}
+                className="app-item inactive"
+                onMouseEnter={() => setHoveredId(a.id)}
+                onMouseLeave={() => setHoveredId(null)}
+              >
                 <div className="app-dot dot-inactive" />
                 <span className="app-name">{a.name}</span>
+                {hoveredId === a.id && (
+                  <button
+                    className="app-edit-btn"
+                    title="Edit app"
+                    onClick={e => { e.stopPropagation(); onEditApp(a.id) }}
+                  >
+                    <PencilIcon size={13} />
+                  </button>
+                )}
               </div>
             ))}
           </>

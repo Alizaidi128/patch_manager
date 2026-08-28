@@ -35,9 +35,13 @@ function setupUpdater(mainWindow) {
     send('downloaded', { version: info.version })
   })
 
-  autoUpdater.on('error', err => {
+  autoUpdater.on('error', (err, message) => {
     log.error('[updater] Error', err)
-    send('error', { message: err.message })
+    // Silently swallow background check failures (no published release yet, network issues, etc.)
+    // Only surface errors that happen during an active download
+    if (autoUpdater.downloadingUpdateInfo) {
+      send('error', { message: 'Download failed — check your connection and try again.' })
+    }
   })
 
   // Check on startup after a short delay (let the app fully load first)
@@ -53,7 +57,7 @@ function checkNow(mainWindow) {
   send('checking', {})
   autoUpdater.checkForUpdates().catch(e => {
     log.warn('[updater] manual check failed', e.message)
-    send('error', { message: e.message })
+    send('error', { message: 'Could not reach update server. Check your connection or try again later.' })
   })
 }
 

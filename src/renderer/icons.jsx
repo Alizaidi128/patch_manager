@@ -40,3 +40,4 @@ export function EyeOffIcon(p)      { return <Icon {...p}><path d="M9.9 4.24A9.1 
 export function DownloadIcon(p)    { return <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></Icon> }
 export function ShieldIcon(p)      { return <Icon {...p}><path d="M12 2 4 5v6c0 5 3.4 8.7 8 11 4.6-2.3 8-6 8-11V5Z"/></Icon> }
 export function ArchiveIcon(p)     { return <Icon {...p}><rect x="2" y="3" width="20" height="4" rx="2"/><path d="M4 7v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7"/><path d="M10 12h4"/></Icon> }
+export function SearchIcon(p)      { return <Icon {...p}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></Icon> }

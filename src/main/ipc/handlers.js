@@ -7,6 +7,23 @@ const {
   updatePatch, updatePatchFile, getLogEntries, deletePatch
 } = require('../db/queries')
 
+// Wrap an IPC handler: logs channel + key args, times the call, logs result/error
+function handle(channel, fn, summarize) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    const summary = summarize ? summarize(...args) : (args.length ? JSON.stringify(args[0]).slice(0, 120) : '')
+    log.section(`IPC ${channel}`, summary)
+    const t0 = Date.now()
+    try {
+      const result = await fn(event, ...args)
+      log.info(`[IPC] ${channel} → OK  (${Date.now() - t0}ms)`)
+      return result
+    } catch (e) {
+      log.error(`[IPC] ${channel} → FAIL (${Date.now() - t0}ms)`, e)
+      throw e
+    }
+  })
+}
+
 function registerHandlers() {
 
   // ---- Settings ----
@@ -121,23 +138,18 @@ function registerHandlers() {
   })
 
   // ---- Phase 3: Email fetch ----
-  ipcMain.handle('outlook:fetch', async (_, { appIds, sinceDate, toDate }) => {
-    log.info('outlook:fetch called', { appIds, sinceDate, toDate })
-    try {
-      const { fetchAll } = require('../email/fetchOrchestrator')
-      const apps = getAllApps()
-      const result = await fetchAll(appIds, sinceDate, apps, toDate)
-      log.info('outlook:fetch done', result)
-      return result
-    } catch (e) {
-      log.error('outlook:fetch failed', e)
-      throw e
-    }
-  })
+  handle('outlook:fetch', async (_, { appIds, sinceDate, toDate }) => {
+    const { fetchAll } = require('../email/fetchOrchestrator')
+    const apps = getAllApps()
+    const result = await fetchAll(appIds, sinceDate, apps, toDate)
+    log.info(`[fetch] Result: fetched=${result.fetched}  duplicates=${result.duplicates}  missing=${result.missingPaths?.length || 0}  errors=${result.errors?.length || 0}`)
+    if (result.errors?.length) result.errors.forEach(e => log.error(`[fetch] App error: ${e.appName} — ${e.error}`))
+    return result
+  }, ({ appIds, sinceDate, toDate }) => `apps=[${appIds?.join(',')}]  since=${sinceDate}  to=${toDate}`)
 
   // ---- Patch actions ----
   ipcMain.handle('patch:set-path', async (_, { patchFileId, deployPath }) => {
-    updatePatchFile(patchFileId, { deploy_target_path: deployPath })
+    updatePatchFile(patchFileId, { deploy_target_path: (deployPath || '').trim() })
     return { success: true }
   })
 
@@ -147,15 +159,15 @@ function registerHandlers() {
   })
 
   // ---- Phase 4: Merge engine ----
-  ipcMain.handle('merge:preview', async (_, { patchFileId }) => {
+  handle('merge:preview', async (_, { patchFileId }) => {
     const { previewMerge } = require('../merge/mergeEngine')
     return previewMerge(patchFileId)
-  })
+  }, ({ patchFileId }) => `patchFileId=${patchFileId}`)
 
-  ipcMain.handle('merge:apply', async (_, { patchFileId, mergedContent }) => {
+  handle('merge:apply', async (_, { patchFileId, mergedContent }) => {
     const { applyMerge } = require('../merge/mergeEngine')
     return applyMerge(patchFileId, mergedContent)
-  })
+  }, ({ patchFileId }) => `patchFileId=${patchFileId}`)
 
   // ---- Script view / download ----
   ipcMain.handle('patch:read-script', async (_, { localPath }) => {
@@ -243,20 +255,20 @@ function registerHandlers() {
   })
 
   // ---- Phase 5: Deployment engine ----
-  ipcMain.handle('deploy:preview', async (_, { patchId }) => {
+  handle('deploy:preview', async (_, { patchId }) => {
     const { previewDeploy } = require('../deploy/deployEngine')
     return previewDeploy(patchId)
-  })
+  }, ({ patchId }) => `patchId=${patchId}`)
 
-  ipcMain.handle('deploy:execute', async (_, { patchId, fileIds, restartTomcat }) => {
+  handle('deploy:execute', async (_, { patchId, fileIds, restartTomcat }) => {
     const { executeDeploy } = require('../deploy/deployEngine')
     return executeDeploy({ patchId, fileIds, restartTomcat })
-  })
+  }, ({ patchId, fileIds }) => `patchId=${patchId}  files=[${fileIds?.join(',')}]`)
 
-  ipcMain.handle('deploy:mark-manual', async (_, { patchId, fileIds }) => {
+  handle('deploy:mark-manual', async (_, { patchId, fileIds }) => {
     const { markManual } = require('../deploy/deployEngine')
     return markManual({ patchId, fileIds })
-  })
+  }, ({ patchId }) => `patchId=${patchId}`)
 
   // ---- WAR deploy ----
   ipcMain.handle('war:deploy', async (event, { appId }) => {
@@ -334,6 +346,12 @@ function registerHandlers() {
     exec(`mstsc /v:${target}`)
     return { success: true }
   })
+
+  // ---- Comprehensive deployment status detection ----
+  handle('patch:detect-all', async (_, { appId }) => {
+    const { detectAllStatus } = require('../deploy/detector')
+    return detectAllStatus(appId)
+  }, ({ appId }) => `appId=${appId}`)
 
   // ---- Dev/test: revert deployed patches back to staged ----
   ipcMain.handle('debug:revert-patches', async (_, { appId }) => {

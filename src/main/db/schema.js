@@ -11,8 +11,18 @@ function getDb() {
 
 function initializeDb() {
   const dbPath = path.join(app.getPath('userData'), 'patch-manager.db')
+  const log = require('../utils/logger')
 
-  db = new Database(dbPath)
+  // Log every SQL statement executed (write operations clearly visible in log)
+  db = new Database(dbPath, {
+    verbose: (sql) => {
+      // Skip trivial pragma/SELECT noise; log everything else
+      const s = sql.trim()
+      if (/^(PRAGMA|BEGIN|COMMIT|ROLLBACK)/i.test(s)) return
+      log.query(s)
+    }
+  })
+  log.info(`[DB] Opened: ${dbPath}`)
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
 
@@ -91,6 +101,7 @@ function initializeDb() {
   try { db.exec(`ALTER TABLE apps ADD COLUMN tomcat_remote_path TEXT`) } catch {}
   try { db.exec(`ALTER TABLE apps ADD COLUMN sftp_server_path TEXT`) } catch {}
   try { db.exec(`ALTER TABLE apps ADD COLUMN patch_path TEXT`) } catch {}
+  try { db.exec(`ALTER TABLE apps ADD COLUMN tomcat_restart_cmd TEXT`) } catch {}
 
   const insertDefault = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)')
   insertDefault.run('patches_root_dir', 'D:\\Office\\Patches_automated')

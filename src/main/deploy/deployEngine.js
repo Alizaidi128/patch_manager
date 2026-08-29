@@ -125,6 +125,21 @@ function deployFileSMB(file, app) {
 // web-app folders like WEB-INF — those ARE part of the path.
 const STRUCTURAL_DIRS = /^(WEB-INF|META-INF|genins|classes|lib|webapps|src|resources|static|templates)$/i
 
+// Target dir for extracting a GIAS archive — always named after the archive.
+function rarExtractTarget(archivePath) {
+  return path.join(path.dirname(archivePath), path.basename(archivePath, path.extname(archivePath)))
+}
+
+// Find where a GIAS archive was previously extracted (detection).
+// Checks: named dir first, then legacy 'extracted/', then parent dir itself (in-place extraction).
+function rarExtractDir(archivePath) {
+  const named = rarExtractTarget(archivePath)
+  if (fs.existsSync(named)) return named
+  const legacy = path.join(path.dirname(archivePath), 'extracted')
+  if (fs.existsSync(legacy)) return legacy
+  return legacy  // fallback path (may not exist — callers must check)
+}
+
 function giasDeployRoot(extractedDir) {
   try {
     const entries = fs.readdirSync(extractedDir, { withFileTypes: true })
@@ -276,7 +291,7 @@ function previewDeploy(patchId, { batchPatchIds = [] } = {}) {
       // SFTP: check whether local source folder is missing files or has older versions
       if (app.deployment_mode === 'sftp' && app.local_src_path && f.local_path) {
         if (f.file_type === 'gias_patch') {
-          const extractedDir = path.join(path.dirname(f.local_path), 'extracted')
+          const extractedDir = rarExtractDir(f.local_path)
           if (fs.existsSync(extractedDir)) {
             const dRoot    = giasDeployRoot(extractedDir)
             const srcFiles = walkDir(dRoot)
@@ -312,7 +327,7 @@ function previewDeploy(patchId, { batchPatchIds = [] } = {}) {
     }
 
     if (f.file_type === 'gias_patch') {
-      const extractedDir = path.join(path.dirname(f.local_path), 'extracted')
+      const extractedDir = rarExtractDir(f.local_path)
       const deployBase   = deployRoot
 
       if (!fs.existsSync(extractedDir)) {
@@ -410,7 +425,7 @@ async function executeDeploy({ patchId, fileIds, restartTomcat }) {
       try {
         let dest
         if (f.file_type === 'gias_patch') {
-          const extractedDir = path.join(path.dirname(f.local_path), 'extracted')
+          const extractedDir = rarExtractDir(f.local_path)
           const deployed = deployGiasLocal(extractedDir, localRoot)
           dest = `${localRoot} (${deployed.length} files)`
           logDeployment({ patchId, patchFileId: f.id, appId: patch.app_id, action: 'deploy-gias', status: 'success', detail: dest })
@@ -439,9 +454,10 @@ async function executeDeploy({ patchId, fileIds, restartTomcat }) {
       try {
         let dest
         if (f.file_type === 'gias_patch') {
-          const extractedDir = path.join(path.dirname(f.local_path), 'extracted')
+          let extractedDir = rarExtractDir(f.local_path)
           if (!fs.existsSync(extractedDir) && f.local_path && fs.existsSync(f.local_path)) {
             const { extract } = require('../patches/extractor')
+            extractedDir = rarExtractTarget(f.local_path)
             await extract(f.local_path, extractedDir)
           }
           const rdpRoot = app.smb_path || app.app_root_path
@@ -468,10 +484,11 @@ async function executeDeploy({ patchId, fileIds, restartTomcat }) {
       try {
         let dest
         if (f.file_type === 'gias_patch') {
-          const extractedDir = path.join(path.dirname(f.local_path), 'extracted')
+          let extractedDir = rarExtractDir(f.local_path)
           // Auto-extract if the user copied the archive without extracting first
           if (!fs.existsSync(extractedDir) && f.local_path && fs.existsSync(f.local_path)) {
             const { extract } = require('../patches/extractor')
+            extractedDir = rarExtractTarget(f.local_path)
             await extract(f.local_path, extractedDir)
           }
           const smbRoot = app.smb_path || app.app_root_path
@@ -543,7 +560,7 @@ function checkDeploymentStatus(patchId) {
 
       if (f.file_type === 'gias_patch' && f.local_path) {
         if (!deployRoot) continue
-        const extractedDir = path.join(path.dirname(f.local_path), 'extracted')
+        const extractedDir = rarExtractDir(f.local_path)
         if (!fs.existsSync(extractedDir)) continue
         const dRoot    = giasDeployRoot(extractedDir)
         const srcFiles = walkDir(dRoot)

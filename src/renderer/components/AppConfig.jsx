@@ -61,7 +61,7 @@ function makeDefault() {
     server_user: '', server_password: '', server_key_path: '',
     app_root_path: '', tomcat_service_name: '', smb_path: '',
     local_src_path: '', war_name: '', remote_war_path: '', tomcat_remote_path: '',
-    sftp_server_path: '', patch_path: '',
+    sftp_server_path: '', patch_path: '', tomcat_restart_cmd: '',
     notes: ''
   }
 }
@@ -396,7 +396,7 @@ export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
               <p className="form-hint">Filename without .war extension. WAR is uploaded to the App Root Path above.</p>
             </div>
 
-            <div className="form-group" style={{ marginBottom: 0 }}>
+            <div className="form-group">
               <label>Tomcat Remote Path <span className="label-note">(optional — for startup/shutdown scripts)</span></label>
               <input
                 type="text" className="form-control mono" style={{ fontSize: 12 }}
@@ -407,6 +407,20 @@ export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
               <p className="form-hint">
                 If set, "Restart Tomcat" runs <code>bin/shutdown.sh</code> then <code>bin/startup.sh</code>.
                 If blank but Tomcat Service Name is set, uses <code>systemctl restart</code>.
+              </p>
+            </div>
+
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label>Tomcat Restart Command <span className="label-note">(optional — custom SSH command)</span></label>
+              <input
+                type="text" className="form-control mono" style={{ fontSize: 12 }}
+                value={form.tomcat_restart_cmd || ''}
+                onChange={e => set('tomcat_restart_cmd', e.target.value)}
+                placeholder="sudo /opt/tomcat/bin/shutdown.sh && sleep 3 && sudo /opt/tomcat/bin/startup.sh"
+              />
+              <p className="form-hint">
+                Custom shell command run over SSH to restart Tomcat. Overrides Tomcat Remote Path and
+                Tomcat Service Name. Leave blank to use the default (<code>systemctl restart {'{service}'}</code>).
               </p>
             </div>
           </div>

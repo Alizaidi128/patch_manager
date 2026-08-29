@@ -1,5 +1,4 @@
 // Phase 4 — .properties file merge engine
-const { formatIso } = require('../utils/dateFormat')
 
 function parseProps(text) {
   const map = new Map()
@@ -33,8 +32,7 @@ function applyMerge(existingText, snippetText) {
   if (toAdd.length === 0) return existingText
 
   const appended = toAdd.map(e => e.line).join('\n')
-  const comment  = `\n# Added by Patch Manager - ${formatIso()}`
-  return existingText.trimEnd() + comment + '\n' + appended + '\n'
+  return existingText.trimEnd() + '\n' + appended + '\n'
 }
 
 module.exports = { previewMerge, applyMerge }

@@ -1,9 +1,9 @@
 const fs = require('fs')
 const path = require('path')
 
-const LOG_DIR = path.join(__dirname, '../../../logs')
+const LOG_DIR  = path.join(__dirname, '../../../logs')
 const LOG_FILE = path.join(LOG_DIR, 'app.log')
-const MAX_BYTES = 5 * 1024 * 1024 // 5 MB rotate
+const MAX_BYTES = 10 * 1024 * 1024 // 10 MB rotate
 
 function ensureDir() {
   if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true })
@@ -12,27 +12,30 @@ function ensureDir() {
 function rotate() {
   try {
     if (fs.existsSync(LOG_FILE) && fs.statSync(LOG_FILE).size > MAX_BYTES) {
-      fs.renameSync(LOG_FILE, LOG_FILE.replace('.log', '.1.log'))
+      const ts = new Date().toISOString().slice(0, 19).replace(/:/g, '-')
+      fs.renameSync(LOG_FILE, path.join(LOG_DIR, `app.${ts}.log`))
     }
   } catch {}
 }
 
 function pktNow() {
-  // PKT = UTC+5, no DST
   const pkt = new Date(Date.now() + 5 * 60 * 60 * 1000)
-  return pkt.toISOString().slice(0, 19).replace('T', ' ') + ' PKT'
+  return pkt.toISOString().slice(0, 23).replace('T', ' ') + ' PKT'
+}
+
+function fmt(a) {
+  if (a instanceof Error) return `${a.message}\n  Stack: ${(a.stack || '').split('\n').slice(1, 4).join('\n  ')}`
+  if (typeof a === 'object' && a !== null) return JSON.stringify(a)
+  return String(a)
 }
 
 function write(level, ...args) {
-  const ts = pktNow()
-  const msg = args.map(a =>
-    a instanceof Error ? `${a.message}\n${a.stack}` :
-    typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)
-  ).join(' ')
-  const line = `[${ts}] [${level}] ${msg}\n`
+  const ts  = pktNow()
+  const msg = args.map(fmt).join(' ')
+  const line = `[${ts}] [${level.padEnd(5)}] ${msg}\n`
 
-  // Always mirror to terminal
   if (level === 'ERROR') console.error(line.trimEnd())
+  else if (level === 'QUERY') {} // SQL-only, skip console
   else console.log(line.trimEnd())
 
   try {
@@ -40,6 +43,19 @@ function write(level, ...args) {
     rotate()
     fs.appendFileSync(LOG_FILE, line)
   } catch {}
+}
+
+// Log a DB query with its bound parameters
+function query(sql, params) {
+  const clean  = sql.replace(/\s+/g, ' ').trim()
+  const pStr   = params && params.length ? `  params: [${params.map(p => JSON.stringify(p)).join(', ')}]` : ''
+  write('QUERY', `${clean}${pStr}`)
+}
+
+// Log a visual section separator (operation start)
+function section(name, detail = '') {
+  const bar = '─'.repeat(60)
+  write('INFO ', `\n${bar}\n  ▶ ${name}${detail ? '  |  ' + detail : ''}\n${bar}`)
 }
 
 function logDeployment({ patchId, patchFileId, appId, action, status, detail }) {
@@ -52,10 +68,13 @@ function logDeployment({ patchId, patchFileId, appId, action, status, detail }) 
 }
 
 module.exports = {
-  info:  (...a) => write('INFO',  ...a),
-  warn:  (...a) => write('WARN',  ...a),
-  error: (...a) => write('ERROR', ...a),
-  debug: (...a) => write('DEBUG', ...a),
+  info:    (...a) => write('INFO ', ...a),
+  warn:    (...a) => write('WARN ', ...a),
+  error:   (...a) => write('ERROR', ...a),
+  debug:   (...a) => write('DEBUG', ...a),
+  query,
+  section,
   logDeployment,
-  logFile: LOG_FILE,
+  logFile:  LOG_FILE,
+  logDir:   LOG_DIR,
 }

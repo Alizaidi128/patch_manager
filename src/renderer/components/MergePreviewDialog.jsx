@@ -95,10 +95,13 @@ export default function MergePreviewDialog({ patchFileId, onClose, onApplied }) 
           <button className="btn btn-secondary" onClick={handleClose} disabled={state === 'applying'}>
             {state === 'done' ? 'Close' : 'Cancel'}
           </button>
-          {state === 'ready' && (
+          {state === 'ready' && preview?.hasChanges && (
             <button className="btn btn-primary" onClick={handleApply}>
               Apply Merge
             </button>
+          )}
+          {state === 'ready' && !preview?.hasChanges && (
+            <span className="merge-no-changes-note">Nothing to merge — server file is already up to date.</span>
           )}
           {state === 'applying' && (
             <button className="btn btn-primary" disabled>Applying…</button>

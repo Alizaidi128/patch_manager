@@ -237,7 +237,10 @@ async function fetchForApp(app, sinceDate, toDate) {
     ).get(app.id, emailDateDay, email.receivedTime)
     const seqHint = (rankRow?.cnt || 0) + 1
 
-    const localFolder = createPatchFolder(email.receivedTime, app.name, app.patch_path || null, seqHint)
+    // Organize by Outlook folder name so patches from the same folder are grouped together
+    // regardless of which app(s) they apply to.
+    const outlookLeaf = (app.outlook_folder_path ? path.basename(app.outlook_folder_path) : '').trim() || app.name
+    const localFolder = createPatchFolder(email.receivedTime, outlookLeaf, app.patch_path || null, seqHint)
     const patchId     = createPatch({
       app_id:         app.id,
       email_entry_id: email.entryId || null,
@@ -351,7 +354,9 @@ async function fetchForApp(app, sinceDate, toDate) {
 
       // Extract GIAS archives
       if (fileType === 'gias_patch') {
-        const extractDir = path.join(localFolder, 'extracted')
+        // Name the extraction folder after the archive (e.g. GIAS_Reserved_Folders)
+        const archiveBase = path.basename(att.filename, path.extname(att.filename))
+        const extractDir  = path.join(localFolder, archiveBase)
         try {
           await extract(savePath, extractDir)
           logDeployment({

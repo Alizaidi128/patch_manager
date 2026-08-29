@@ -157,7 +157,14 @@ export default function FetchDialog({ apps, onClose, onComplete }) {
                 </div>
               )}
 
-              {result.fetched === 0 && (!result.errors || !result.errors.length) && (
+              {result.duplicates > 0 && (
+                <div className="fetch-result-row">
+                  <span className="fetch-result-icon">ℹ</span>
+                  <span><strong>{result.duplicates}</strong> email{result.duplicates !== 1 ? 's' : ''} already imported (skipped) — check the Patch Inbox.</span>
+                </div>
+              )}
+
+              {result.fetched === 0 && (!result.errors || !result.errors.length) && (!result.duplicates) && (
                 <div className="fetch-result-row">
                   <span className="fetch-result-icon">ℹ</span>
                   <span>No new emails found between {since} and {toDate}.</span>

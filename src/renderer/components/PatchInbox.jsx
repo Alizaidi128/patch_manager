@@ -2,9 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import PatchRow from './PatchRow'
 import ConfirmDialog from './ConfirmDialog'
 import ScriptViewModal from './ScriptViewModal'
+import DetectionModal from './DetectionModal'
 import {
   RocketIcon, TrashIcon, MailIcon, PackageIcon, ServerIcon,
-  UndoIcon, RefreshCwIcon, CheckCircleIcon, XCircleIcon, InboxIcon, EyeIcon, ArchiveIcon
+  UndoIcon, RefreshCwIcon, CheckCircleIcon, XCircleIcon, InboxIcon, EyeIcon, ArchiveIcon, SearchIcon
 } from '../icons.jsx'
 
 const STATUS_TABS = [
@@ -26,6 +27,7 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
   const [tomcatState, setTomcatState] = useState(null)
   const [scriptFile, setScriptFile]   = useState(null)  // single patch_file for row-level view
   const [masterScript, setMasterScript] = useState(null) // array of {file,patchSubject} for toolbar view
+  const [showDetection, setShowDetection] = useState(false)
 
   const load = useCallback(async () => {
     if (!app) return
@@ -283,6 +285,15 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
             {loading ? 'Loading…' : 'Refresh'}
           </button>
 
+          <button
+            className="btn btn-detect btn-sm icon-btn"
+            onClick={() => setShowDetection(true)}
+            title="Check which patches and merge files are already deployed by comparing with app directory"
+          >
+            <SearchIcon size={13} />
+            Detect Status
+          </button>
+
           {hasWar && (
             <button
               className="btn btn-war btn-sm icon-btn"
@@ -492,6 +503,14 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
         <ScriptViewModal
           patchFiles={masterScript}
           onClose={() => setMasterScript(null)}
+        />
+      )}
+
+      {showDetection && (
+        <DetectionModal
+          appId={app.id}
+          appName={app.name}
+          onClose={() => { setShowDetection(false); load() }}
         />
       )}
     </div>

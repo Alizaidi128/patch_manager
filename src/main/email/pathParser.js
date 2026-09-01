@@ -17,6 +17,10 @@ function extractDeploymentPaths(emailBody) {
     if (!p) return
     // Strip wildcards, backslash prefixes, and trailing slashes/dots
     p = p.replace(/^[\\\/]+/, '').replace(/[*?]/g, '').replace(/[\/\\\.]+$/, '').trim()
+    // Strip trailing \.ext remnants from wildcard patterns like \\di\*.jsp → di\.jsp → di
+    p = p.replace(/[\\\/]\.[a-zA-Z]{1,4}$/, '')
+    // Strip GIAS_APP/ prefix — it's a placeholder tag for the app root, not a real folder
+    p = p.replace(/^GIAS[_A-Z0-9]*[\/\\]/i, '')
     if (p.length < 2 || seen.has(p)) return
     // Skip common English words that aren't folder names
     if (PATH_BLOCKLIST.has(p.toLowerCase())) return
@@ -63,6 +67,13 @@ function extractDeploymentPaths(emailBody) {
     add(p, 'medium')
   })
 
+  // HIGH: "Application Path: X" pattern (common in Pakistani enterprise email style)
+  const appPathMatches = body.match(/application\s+path\s*:\s*([^\s\n,<>]+)/gi) || []
+  appPathMatches.forEach(m => {
+    const match = m.match(/:\s*([^\s\n,<>]+)$/)
+    if (match) add(match[1], 'high')
+  })
+
   // MEDIUM: Windows-style paths
   const winPaths = body.match(/[A-Z][A-Z0-9_]{2,}(?:[\\\/][A-Z0-9_\-\.]+){2,}/gi) || []
   winPaths.forEach(p => add(p, 'medium'))
@@ -70,4 +81,14 @@ function extractDeploymentPaths(emailBody) {
   return paths
 }
 
-module.exports = { extractDeploymentPaths }
+// Extract <servlet> and <servlet-mapping> blocks from email body.
+// Used to create a virtual web.xml merge file when no attachment carries them.
+function extractBodyXml(rawBody) {
+  if (!rawBody) return null
+  const servlets  = rawBody.match(/<servlet[\s\S]*?<\/servlet>/gi)  || []
+  const mappings  = rawBody.match(/<servlet-mapping[\s\S]*?<\/servlet-mapping>/gi) || []
+  if (!servlets.length && !mappings.length) return null
+  return [...servlets, ...mappings].map(b => b.trim()).join('\n')
+}
+
+module.exports = { extractDeploymentPaths, extractBodyXml }

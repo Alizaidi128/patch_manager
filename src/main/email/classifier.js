@@ -25,8 +25,11 @@ function classifyAttachment(filename) {
       (ext === '.txt' && lower.includes('xml'))) return 'xml_merge'
 
   // Properties merge
-  if (ext === '.properties' || lower.includes('log4j') || lower.includes('log4property') ||
-      (ext === '.txt' && (lower.includes('propert') || lower.includes('log4')))) return 'props_merge'
+  if (ext === '.properties') return 'props_merge'
+  if (lower.includes('log4j') || lower.includes('log4property')) return 'props_merge'
+  if (ext === '.txt' && (lower.includes('propert') || lower.includes('log4'))) return 'props_merge'
+  // Label bundle files: labels.txt, label.txt, labelsbundle.txt, etc.
+  if (ext === '.txt' && /^labels?(?:bundle)?(\.|_|$)/i.test(path.basename(lower))) return 'props_merge'
 
   // DB / shell scripts
   if (SCRIPT_EXTS.has(ext)) return 'db_script'

@@ -59,7 +59,18 @@ $since  = [DateTime]::Parse($SinceDate)
 $toEnd  = if ($ToDate -ne "") { [DateTime]::Parse($ToDate).AddDays(1) } else { [DateTime]::MaxValue }
 $results = @()
 
-foreach ($mail in $folder.Items) {
+# Use Items.Restrict with a DASL date filter — much faster than iterating all items.
+# Falls back to a full scan if Restrict isn't supported (e.g. some PST stores).
+$mailItems = $null
+try {
+  $sinceUtc = $since.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+  $filter   = "@SQL=""urn:schemas:httpmail:datereceived"" >= '$sinceUtc'"
+  $mailItems = $folder.Items.Restrict($filter)
+} catch {
+  $mailItems = $folder.Items
+}
+
+foreach ($mail in $mailItems) {
   if ($mail.Class -ne 43) { continue }
   if ($mail.ReceivedTime -lt $since) { continue }
   if ($mail.ReceivedTime -ge $toEnd) { continue }
@@ -73,6 +84,23 @@ foreach ($mail in $folder.Items) {
     }
   }
 
+  # Extract plain-text body, sanitized for safe JSON serialization
+  $bodyText = ""
+  try {
+    $raw = $mail.Body
+    if (-not $raw -or $raw.Trim() -eq "") {
+      $raw = $mail.HTMLBody -replace '<[^>]+>', ' '
+    }
+    if ($raw) {
+      # Remove control characters (including null bytes) that break ConvertTo-Json in PS 5.1
+      $raw = $raw -replace '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', ''
+      # Collapse excessive whitespace and cap length
+      $raw = $raw -replace '\s{3,}', "`n"
+      if ($raw.Length -gt 4000) { $raw = $raw.Substring(0, 4000) }
+      $bodyText = $raw.Trim()
+    }
+  } catch { $bodyText = "" }
+
   $results += @{
     entryId        = $mail.EntryID
     subject        = $mail.Subject
@@ -82,6 +110,7 @@ foreach ($mail in $folder.Items) {
     hasAttachments = ($mail.Attachments.Count -gt 0)
     attachments    = $attachments
     folder         = $FolderPath
+    body           = $bodyText
   }
 
   if ($results.Count -ge $MaxEmails) { break }

@@ -33,7 +33,7 @@ const MERGE_TYPES = new Set(['xml_merge', 'props_merge'])
 
 const PATH_EDITABLE_TYPES = new Set(['jsp', 'js_file', 'xml_merge', 'props_merge'])
 
-function FileRow({ file, onMerge, onViewScript, onPathSaved }) {
+function FileRow({ file, onMerge, onViewScript, onPathSaved, serverOffline }) {
   const [editing, setEditing]   = useState(false)
   const [pathVal, setPathVal]   = useState(file.deploy_target_path || '')
   const [saving,  setSaving]    = useState(false)
@@ -139,6 +139,8 @@ function FileRow({ file, onMerge, onViewScript, onPathSaved }) {
         <button
           className="btn btn-secondary btn-sm file-merge-btn"
           onClick={e => { e.stopPropagation(); onMerge(file) }}
+          disabled={serverOffline}
+          title={serverOffline ? 'Server unreachable' : undefined}
         >
           Preview Merge
         </button>
@@ -147,7 +149,7 @@ function FileRow({ file, onMerge, onViewScript, onPathSaved }) {
   )
 }
 
-export default function PatchRow({ patch, onOpenFolder, onMerge, onDeploy, onDelete, onMarkDeployed, onViewScript, onPathSaved, selected, onToggleSelect }) {
+export default function PatchRow({ patch, onOpenFolder, onMerge, onDeploy, onDelete, onMarkDeployed, onViewScript, onPathSaved, selected, onToggleSelect, serverOffline }) {
   const [expanded, setExpanded] = useState(false)
   const files = patch.files || []
 
@@ -244,6 +246,7 @@ export default function PatchRow({ patch, onOpenFolder, onMerge, onDeploy, onDel
                 onMerge={file => onMerge(file)}
                 onViewScript={file => onViewScript(file)}
                 onPathSaved={onPathSaved}
+                serverOffline={serverOffline}
               />
             ))}
             {files.length === 0 && <div className="patch-no-files">No files</div>}
@@ -271,6 +274,8 @@ export default function PatchRow({ patch, onOpenFolder, onMerge, onDeploy, onDel
               <button
                 className="btn btn-primary btn-sm icon-btn"
                 onClick={() => onDeploy(patch.id)}
+                disabled={serverOffline}
+                title={serverOffline ? 'Server unreachable' : undefined}
               >
                 <RocketIcon size={13} />
                 Deploy…

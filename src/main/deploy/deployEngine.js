@@ -219,20 +219,34 @@ async function deployGiasSFTP(extractedDir, appRootPath, app) {
 async function restartTomcatSFTP(app) {
   const { Client } = require('ssh2')
   const name = app.tomcat_service_name || 'tomcat'
-  const cmd  = app.tomcat_restart_cmd
+  let cmd = app.tomcat_restart_cmd
     ? app.tomcat_restart_cmd
     : `sudo systemctl restart ${name} 2>&1 || sudo service ${name} restart 2>&1`
+
+  // If a run-as user is configured (e.g. "oracle"), wrap with sudo su - user -c "..."
+  // This is needed when the SSH login user differs from the Tomcat process owner.
+  const runAs = (app.tomcat_run_as_user || '').trim()
+  if (runAs) {
+    // Escape single quotes in the command before embedding in -c '...'
+    const escaped = cmd.replace(/'/g, `'"'"'`)
+    cmd = `sudo su - ${runAs} -c '${escaped}'`
+  }
+
   return new Promise((resolve, reject) => {
     const conn = new Client()
     let out = ''
     conn.on('ready', () => {
-      conn.exec(cmd, (err, stream) => {
+      // Request a PTY — required for sudo su - to work without a password prompt
+      const execOpts = runAs ? { pty: { rows: 24, cols: 80, term: 'vt100' } } : {}
+      conn.exec(cmd, execOpts, (err, stream) => {
         if (err) { conn.end(); return reject(err) }
         stream.on('data', d => { out += d })
         stream.stderr.on('data', d => { out += d })
-        stream.on('close', code => {
+        stream.on('close', (code) => {
           conn.end()
-          if (code !== 0) reject(new Error(`Tomcat restart exit ${code}: ${out.trim()}`))
+          // With PTY, exit code is sometimes unreliable — check for error keywords in output
+          const failed = code !== 0 || /permission denied|error|failed/i.test(out) && !/started|running/i.test(out)
+          if (failed && code !== 0) reject(new Error(`Tomcat restart exit ${code}: ${out.trim()}`))
           else resolve(out.trim())
         })
       })
@@ -592,4 +606,4 @@ function checkDeploymentStatus(patchId) {
   } catch { return [] }
 }
 
-module.exports = { previewDeploy, executeDeploy, markManual, checkDeploymentStatus }
+module.exports = { previewDeploy, executeDeploy, markManual, checkDeploymentStatus, localDeployRoot }

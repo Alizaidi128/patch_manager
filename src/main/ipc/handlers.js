@@ -149,7 +149,9 @@ function registerHandlers() {
 
   // ---- Patch actions ----
   ipcMain.handle('patch:set-path', async (_, { patchFileId, deployPath }) => {
-    updatePatchFile(patchFileId, { deploy_target_path: (deployPath || '').trim() })
+    const trimmed = (deployPath || '').trim()
+    updatePatchFile(patchFileId, { deploy_target_path: trimmed })
+    log.info(`[set-path] patchFileId=${patchFileId}  path="${trimmed}"`)
     return { success: true }
   })
 
@@ -218,18 +220,70 @@ function registerHandlers() {
     return { success: true }
   })
 
+  // ---- Quick reachability check for the app's server ----
+  ipcMain.handle('app:check-reachable', async (_, { appId }) => {
+    const net = require('net')
+    const db = require('../db/schema').getDb()
+    const appRow = db.prepare('SELECT * FROM apps WHERE id = ?').get(appId)
+    if (!appRow) return { reachable: true }
+
+    let host = null
+    let port = 445  // SMB default
+
+    if (appRow.deployment_mode === 'sftp') {
+      host = (appRow.server_host || '').trim()
+      port = parseInt(appRow.server_port || '22', 10)
+    } else {
+      const p = (appRow.smb_path || appRow.app_root_path || '').trim()
+      if (p.startsWith('\\\\') || p.startsWith('//')) {
+        host = p.replace(/^[\\\/]+/, '').split(/[\\\/]/)[0]
+      }
+    }
+
+    if (!host) {
+      log.debug(`[reachability] app=${appRow.name} — no host to check, assuming reachable`)
+      return { reachable: true }
+    }
+
+    return new Promise(resolve => {
+      const socket = new net.Socket()
+      socket.setTimeout(2000)
+      socket.on('connect', () => {
+        socket.destroy()
+        log.info(`[reachability] app=${appRow.name}  ${host}:${port} → REACHABLE`)
+        resolve({ reachable: true })
+      })
+      socket.on('timeout', () => {
+        socket.destroy()
+        log.warn(`[reachability] app=${appRow.name}  ${host}:${port} → TIMEOUT`)
+        resolve({ reachable: false })
+      })
+      socket.on('error', (err) => {
+        socket.destroy()
+        log.warn(`[reachability] app=${appRow.name}  ${host}:${port} → ERROR: ${err.message}`)
+        resolve({ reachable: false })
+      })
+      socket.connect(port, host)
+    })
+  })
+
   // ---- Auto-detect deployed status by comparing file dates with app directory ----
   ipcMain.handle('patch:auto-detect-status', async (_, { patchIds }) => {
     const { checkDeploymentStatus } = require('../deploy/deployEngine')
     const db = require('../db/schema').getDb()
     const autoDeployed = []
 
+    log.info(`[auto-detect] Checking ${patchIds.length} staged patch(es)`)
     for (const patchId of patchIds) {
       const results = checkDeploymentStatus(patchId)
-      if (!results.length) continue
+      if (!results.length) {
+        log.debug(`[auto-detect] patchId=${patchId} — no checkable files`)
+        continue
+      }
 
       // Only auto-mark if every checked file is deployed
       const allDeployed = results.every(r => r.status === 'deployed')
+      log.info(`[auto-detect] patchId=${patchId}  files=${results.length}  allDeployed=${allDeployed}`)
       for (const r of results) {
         if (r.status === 'deployed') {
           db.prepare(`UPDATE patch_files SET deploy_status = 'deployed' WHERE id = ? AND deploy_status = 'pending'`).run(r.fileId)
@@ -238,6 +292,7 @@ function registerHandlers() {
       if (allDeployed) {
         db.prepare(`UPDATE patches SET status = 'deployed', deployed_at = datetime('now') WHERE id = ? AND status = 'staged'`).run(patchId)
         autoDeployed.push(patchId)
+        log.info(`[auto-detect] patchId=${patchId} → auto-marked deployed`)
       }
     }
 
@@ -251,6 +306,7 @@ function registerHandlers() {
     const db = require('../db/schema').getDb()
     db.prepare(`UPDATE patches SET status = 'deployed', deployed_at = datetime('now') WHERE id = ?`).run(patchId)
     db.prepare(`UPDATE patch_files SET deploy_status = 'deployed' WHERE patch_id = ? AND deploy_status = 'pending'`).run(patchId)
+    log.info(`[mark-deployed] patchId=${patchId}  subject="${patch.email_subject}"`)
     return { success: true }
   })
 

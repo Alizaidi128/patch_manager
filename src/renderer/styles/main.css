@@ -665,6 +665,17 @@ body {
   overflow: hidden;
 }
 
+.inbox-offline-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: color-mix(in srgb, #e05252 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, #e05252 30%, transparent);
+  color: #e05252;
+  font-size: 12px;
+}
+
 .inbox-toolbar {
   display: flex;
   align-items: center;

@@ -3,7 +3,8 @@ const path = require('path')
 const os   = require('os')
 const { getDb }          = require('../db/schema')
 const { updatePatchFile } = require('../db/queries')
-const { logDeployment }  = require('../utils/logger')
+const log                = require('../utils/logger')
+const { logDeployment }  = log
 const { previewMerge: xmlPreview, applyMerge: xmlApply }       = require('./xmlMerge')
 const { previewMerge: propsPreview, applyMerge: propsApply }   = require('./propsMerge')
 
@@ -76,11 +77,9 @@ async function writeToServer(app, filePath, content) {
 
   // Local or UNC path — write directly regardless of deployment mode
   if (isLocalPath(filePath) || app.deployment_mode === 'smb' || app.deployment_mode === 'rdp_assisted') {
-    const bak = `${filePath}.bak-${ts}`
-    if (fs.existsSync(filePath)) fs.copyFileSync(filePath, bak)
     fs.mkdirSync(path.dirname(filePath), { recursive: true })
     fs.writeFileSync(filePath, content, 'utf8')
-    return bak
+    return null
   }
 
   if (app.deployment_mode === 'sftp') {
@@ -91,7 +90,7 @@ async function writeToServer(app, filePath, content) {
     try {
       await sftp.connect(sftpOpts(app))
       const bak = `${filePath}.bak-${ts}`
-      try { await sftp.rename(filePath, bak) } catch {}
+      try { await sftp.rename(filePath, `${filePath}.bak-${ts}`) } catch {}
       await sftp.fastPut(tmp, filePath)
       await sftp.end()
       try { fs.unlinkSync(tmp) } catch {}
@@ -183,6 +182,7 @@ function resolveFilePath(deployTargetPath, originalFilename) {
 
 async function previewMerge(patchFileId) {
   const { file, app } = getFileWithContext(patchFileId)
+  log.info(`[merge:preview] patchFileId=${patchFileId}  file="${file.original_filename}"  type=${file.file_type}  target="${file.deploy_target_path}"`)
 
   if (!file.deploy_target_path)
     throw new Error('No deployment path set for this file. Set a path first.')
@@ -229,15 +229,32 @@ async function previewMerge(patchFileId) {
     )
   }
 
+  const hasChanges = (preview.toAdd?.length ?? 0) > 0 ||
+    (preview.toAdd?.servlets?.length ?? 0) + (preview.toAdd?.mappings?.length ?? 0) > 0
+  log.info(`[merge:preview] patchFileId=${patchFileId}  resolvedPath="${resolvedPath}"  hasChanges=${hasChanges}`)
   return {
     ...preview,
     mergedContent,
     fileType:    file.file_type,
     filename:    file.original_filename,
     deployPath:  resolvedPath,
-    hasChanges:  (preview.toAdd?.length ?? 0) > 0 ||
-                 (preview.toAdd?.servlets?.length ?? 0) + (preview.toAdd?.mappings?.length ?? 0) > 0
+    hasChanges
   }
+}
+
+// When deploy_target_path is a directory, return all .properties files inside it.
+// Used so a single label patch file merges into every locale bundle in the folder.
+function resolveAllTargets(deployTargetPath, originalFilename) {
+  const cleanPath = (deployTargetPath || '').trim()
+  if (path.extname(cleanPath)) return [cleanPath]  // explicit file path — single target
+  try {
+    if (!fs.existsSync(cleanPath) || !fs.statSync(cleanPath).isDirectory()) {
+      return [resolveFilePath(deployTargetPath, originalFilename)]
+    }
+    const entries = fs.readdirSync(cleanPath).filter(e => path.extname(e).toLowerCase() === '.properties')
+    if (entries.length > 0) return entries.map(e => path.join(cleanPath, e))
+  } catch {}
+  return [resolveFilePath(deployTargetPath, originalFilename)]
 }
 
 async function applyMerge(patchFileId, mergedContent) {
@@ -248,30 +265,31 @@ async function applyMerge(patchFileId, mergedContent) {
     throw new Error('Apply aborted: merged content received from UI is empty. No changes were made.')
   }
 
-  // Re-read the existing file to confirm the merge result isn't smaller
-  const resolvedPath = resolveFilePath(file.deploy_target_path, file.original_filename)
-  const existing = await readFromServer(app, resolvedPath)
-  if (existing && mergedContent.length < existing.length * 0.5) {
-    throw new Error(
-      `Apply aborted: merged result (${mergedContent.length} chars) is less than half the current ` +
-      `server file size (${existing.length} chars). No changes were made.`
-    )
-  }
+  const snippet = fs.readFileSync(file.local_path, 'utf8')
 
-  await writeToServer(app, resolvedPath, mergedContent)
+  // For props_merge targeting a directory: apply to every .properties file in it
+  const targets = (file.file_type === 'props_merge')
+    ? resolveAllTargets(file.deploy_target_path, file.original_filename)
+    : [resolveFilePath(file.deploy_target_path, file.original_filename)]
+
+  for (const resolvedPath of targets) {
+    const existing = await readFromServer(app, resolvedPath)
+    if (existing && existing.trim().length > 0) {
+      const { applyMerge: propsApplyFn } = require('./propsMerge')
+      const result = propsApplyFn(existing, snippet)
+      if (result.length < existing.length * 0.5) continue  // safety — skip this file if result looks wrong
+      await writeToServer(app, resolvedPath, result)
+      logDeployment({
+        patchId: patch.id, patchFileId, appId: patch.app_id,
+        action: 'merge', status: 'success',
+        detail: `Merged ${file.original_filename} → ${resolvedPath}`
+      })
+    }
+  }
 
   updatePatchFile(patchFileId, { merge_status: 'merged', deploy_status: 'deployed' })
 
-  logDeployment({
-    patchId:     patch.id,
-    patchFileId,
-    appId:       patch.app_id,
-    action:      'merge',
-    status:      'success',
-    detail:      `Merged ${file.original_filename} → ${resolvedPath}`
-  })
-
-  return { success: true }
+  return { success: true, appliedTo: targets.length }
 }
 
 module.exports = { previewMerge, applyMerge, resolveFilePath }

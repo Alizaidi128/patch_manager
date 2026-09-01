@@ -61,7 +61,7 @@ function makeDefault() {
     server_user: '', server_password: '', server_key_path: '',
     app_root_path: '', tomcat_service_name: '', smb_path: '',
     local_src_path: '', war_name: '', remote_war_path: '', tomcat_remote_path: '',
-    sftp_server_path: '', patch_path: '', tomcat_restart_cmd: '',
+    sftp_server_path: '', patch_path: '', tomcat_restart_cmd: '', tomcat_run_as_user: '',
     notes: ''
   }
 }
@@ -410,7 +410,7 @@ export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
               </p>
             </div>
 
-            <div className="form-group" style={{ marginBottom: 0 }}>
+            <div className="form-group">
               <label>Tomcat Restart Command <span className="label-note">(optional — custom SSH command)</span></label>
               <input
                 type="text" className="form-control mono" style={{ fontSize: 12 }}
@@ -421,6 +421,21 @@ export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
               <p className="form-hint">
                 Custom shell command run over SSH to restart Tomcat. Overrides Tomcat Remote Path and
                 Tomcat Service Name. Leave blank to use the default (<code>systemctl restart {'{service}'}</code>).
+              </p>
+            </div>
+
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label>Run Tomcat As User <span className="label-note">(optional — e.g. oracle)</span></label>
+              <input
+                type="text" className="form-control mono" style={{ fontSize: 12 }}
+                value={form.tomcat_run_as_user || ''}
+                onChange={e => set('tomcat_run_as_user', e.target.value)}
+                placeholder="oracle"
+              />
+              <p className="form-hint">
+                If the SSH login user differs from the Tomcat owner, enter the owner's username here.
+                The restart command will be wrapped as <code>sudo su - oracle -c "..."</code>.
+                Requires <code>NOPASSWD</code> sudoers access for your login user.
               </p>
             </div>
           </div>

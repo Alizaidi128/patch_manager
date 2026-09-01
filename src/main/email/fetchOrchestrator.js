@@ -4,11 +4,48 @@ const { getDb }                        = require('../db/schema')
 const { createPatch, createPatchFile } = require('../db/queries')
 const { getEmails, saveAttachment }    = require('./outlookBridge')
 const { classifyAttachment }           = require('./classifier')
-const { extractDeploymentPaths }       = require('./pathParser')
+const { extractDeploymentPaths, extractBodyXml } = require('./pathParser')
 const { createPatchFolder }            = require('../patches/organizer')
 const { extract }                      = require('../patches/extractor')
 const log                              = require('../utils/logger')
 const { logDeployment }                = log
+
+// ---- Known fixed deploy paths -----------------------------------------------
+// Files that always go to the same location regardless of email body content.
+// relPath is relative to the app's base path (smb_path / app_root_path).
+// isDir=true  → store the directory path (the filename stays as-is in that dir)
+// isDir=false → store a full file path (target filename may differ from attachment name)
+const KNOWN_PATH_RULES = [
+  {
+    test:    n => /log4j2?/i.test(n),
+    relPath: path.join('WEB-INF', 'classes', 'log4j2.properties'),
+    isDir:   false,
+  },
+  {
+    test:    n => /^labels?(?:bundle)?(\.|_|$)/i.test(path.basename(n)),
+    relPath: path.join('WEB-INF', 'classes', 'geninslib', 'rb'),
+    isDir:   true,
+  },
+]
+
+function knownDeployPath(filename, app) {
+  const appBase = app.smb_path || app.app_root_path || ''
+  for (const rule of KNOWN_PATH_RULES) {
+    if (rule.test(filename)) {
+      return appBase ? path.join(appBase, rule.relPath) : rule.relPath
+    }
+  }
+  return null
+}
+
+// Build an absolute deploy path: concatenate app base with a detected relative path.
+// If the path already looks absolute (drive letter or UNC), use it unchanged.
+function buildDeployPath(detected, app) {
+  if (!detected) return null
+  if (path.isAbsolute(detected) || detected.startsWith('\\\\') || detected.startsWith('//')) return detected
+  const appBase = app.smb_path || app.app_root_path
+  return appBase ? path.join(appBase, detected) : detected
+}
 
 // SQL keyword pattern — used to detect scripts in email body and text attachments
 const SQL_KW = /\b(?:DROP|CREATE|ALTER|INSERT|UPDATE|DELETE|MERGE|TRUNCATE|SELECT\s+\*|BEGIN|COMMIT|ROLLBACK|GRANT|REVOKE|EXECUTE|DECLARE|CALL)\b/i
@@ -181,7 +218,7 @@ async function fetchForApp(app, sinceDate, toDate) {
   try {
     emails = await getEmails(app.outlook_folder_path, sinceDate, toDate)
   } catch (e) {
-    throw new Error(`${app.name}: ${e.message}`)
+    throw e
   }
 
   log.info(`[fetch:${app.name}] PS returned ${emails.length} email(s) for ${sinceDate}→${toDate}`)
@@ -335,10 +372,27 @@ async function fetchForApp(app, sinceDate, toDate) {
 
           const mergeStatus  = (innerType === 'xml_merge' || innerType === 'props_merge') ? 'pending' : null
           const deployStatus = innerType === 'reference' ? 'skipped' : 'pending'
-          const detectedPaths = extractDeploymentPaths(email.body || '')
-          const deployPath = detectedPaths.length > 0 ? detectedPaths[0].path : null
-          const confidence = detectedPaths.length > 0 ? detectedPaths[0].confidence : null
 
+          // Use the file's relative path inside the archive as the deploy subpath.
+          // e.g. archive contains di/imageview.jsp → relPath = "di\imageview.jsp" → full UNC path
+          const relPathInArchive = path.relative(extractDir, innerPath)
+          const archiveDir = path.dirname(relPathInArchive)
+          const inSubfolder = archiveDir && archiveDir !== '.'
+
+          let deployPath = knownDeployPath(innerName, app)
+          let confidence = deployPath ? 'fixed' : null
+          if (!deployPath && inSubfolder) {
+            // Archive folder structure tells us exactly where this file belongs
+            deployPath = buildDeployPath(relPathInArchive, app)
+            confidence = 'high'
+          }
+          if (!deployPath) {
+            const detectedPaths = extractDeploymentPaths(email.body || '')
+            deployPath = detectedPaths.length > 0 ? buildDeployPath(detectedPaths[0].path, app) : null
+            confidence = detectedPaths.length > 0 ? detectedPaths[0].confidence : null
+          }
+
+              log.info(`[fetch:${app.name}] Archive file "${innerName}" (${innerType}) deployPath="${deployPath || '(none)'}" confidence=${confidence || 'none'}`)
           const patchFileId = createPatchFile({
             patch_id: patchId, original_filename: innerName, local_path: innerPath,
             file_type: innerType, deploy_status: deployStatus,
@@ -346,6 +400,7 @@ async function fetchForApp(app, sinceDate, toDate) {
           })
 
           if (needsPath(innerType) && (!deployPath || confidence === 'low')) {
+            log.warn(`[fetch:${app.name}] Missing/low-confidence path for "${innerName}" — queuing path dialog`)
             missingPaths.push({ patchFileId, patchId, appId: app.id, appName: app.name, filename: innerName, fileType: innerType, ticketRef, emailSubject: email.subject, emailBody: (email.body || '').slice(0, 800).trim(), detectedPath: deployPath, confidence })
           }
         }
@@ -377,18 +432,23 @@ async function fetchForApp(app, sinceDate, toDate) {
         continue
       }
 
-      // Parse deployment path from email body
-      const detectedPaths = extractDeploymentPaths(email.body || '')
-      let deployPath  = null
-      let confidence  = null
-      if (detectedPaths.length > 0) {
-        deployPath = detectedPaths[0].path
-        confidence = detectedPaths[0].confidence
+      // 1. Check known fixed-path rules (log4j2, labels, etc.) — highest priority
+      let deployPath = knownDeployPath(att.filename, app)
+      let confidence = deployPath ? 'fixed' : null
+
+      // 2. Fall back to email body path detection, then concatenate with app base
+      if (!deployPath) {
+        const detectedPaths = extractDeploymentPaths(email.body || '')
+        if (detectedPaths.length > 0) {
+          deployPath = buildDeployPath(detectedPaths[0].path, app)
+          confidence = detectedPaths[0].confidence
+        }
       }
 
       const deployStatus = fileType === 'reference' ? 'skipped' : 'pending'
       const mergeStatus  = (fileType === 'xml_merge' || fileType === 'props_merge') ? 'pending' : null
 
+      log.info(`[fetch:${app.name}] File "${att.filename}" (${fileType}) deployPath="${deployPath || '(none)'}" confidence=${confidence || 'none'}`)
       const patchFileId = createPatchFile({
         patch_id:           patchId,
         original_filename:  att.filename,
@@ -400,6 +460,7 @@ async function fetchForApp(app, sinceDate, toDate) {
       })
 
       if (needsPath(fileType) && (!deployPath || confidence === 'low')) {
+        log.warn(`[fetch:${app.name}] Missing/low-confidence path for "${att.filename}" — queuing path dialog`)
         missingPaths.push({
           patchFileId, patchId, appId: app.id, appName: app.name,
           filename: att.filename, fileType, ticketRef,
@@ -426,6 +487,21 @@ async function fetchForApp(app, sinceDate, toDate) {
         local_path: compiledPath, file_type: 'db_script',
         deploy_status: 'skipped', merge_status: null, deploy_target_path: null
       })
+    }
+
+    // Extract <servlet>/<servlet-mapping> blocks from email body → virtual web.xml merge file
+    const bodyXml = extractBodyXml(stripEmailQuotes(email.body || ''))
+    if (bodyXml) {
+      const xmlFilePath = path.join(localFolder, 'body_webxml_entries.txt')
+      fs.writeFileSync(xmlFilePath, bodyXml, 'utf8')
+      const webXmlDeployPath = buildDeployPath(path.join('WEB-INF', 'web.xml'), app)
+      createPatchFile({
+        patch_id: patchId, original_filename: 'body_webxml_entries.txt',
+        local_path: xmlFilePath, file_type: 'xml_merge',
+        deploy_status: 'pending', merge_status: 'pending',
+        deploy_target_path: webXmlDeployPath
+      })
+      log.info(`[fetch:${app.name}] Extracted web.xml entries from email body → ${xmlFilePath}`)
     }
 
     fetched++

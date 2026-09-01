@@ -1,5 +1,13 @@
 const { execFile } = require('child_process')
 const path = require('path')
+const fs   = require('fs')
+const log  = require('../utils/logger')
+
+// 64-bit PS first; fall back to 32-bit if COM can't reach a 32-bit Outlook
+const PS_PATHS = [
+  'powershell.exe',
+  'C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe',
+]
 
 function getScriptsDir() {
   const { app } = require('electron')
@@ -8,7 +16,7 @@ function getScriptsDir() {
     : path.join(__dirname, '../../scripts')
 }
 
-function runPs(scriptName, params = []) {
+function runPsExe(psExe, scriptName, params) {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(getScriptsDir(), scriptName)
     const args = [
@@ -17,7 +25,7 @@ function runPs(scriptName, params = []) {
       '-File', scriptPath,
       ...params
     ]
-    execFile('powershell.exe', args, { maxBuffer: 20 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile(psExe, args, { maxBuffer: 20 * 1024 * 1024 }, (err, stdout, stderr) => {
       const errText = (stderr || '').trim()
       if (errText.includes('OUTLOOK_NOT_RUNNING')) {
         const e = new Error('Please open Microsoft Outlook and try again.')
@@ -35,6 +43,25 @@ function runPs(scriptName, params = []) {
       resolve(stdout.trim())
     })
   })
+}
+
+// Try 64-bit PS; if Outlook COM fails (bitness mismatch) retry with 32-bit PS
+async function runPs(scriptName, params = []) {
+  const candidates = PS_PATHS.filter((p, i) => i === 0 || fs.existsSync(p))
+  let lastErr
+  for (const psExe of candidates) {
+    log.info(`[outlook] Running ${scriptName} via ${psExe}`)
+    try {
+      const result = await runPsExe(psExe, scriptName, params)
+      log.info(`[outlook] ${scriptName} succeeded via ${path.basename(psExe)}`)
+      return result
+    } catch (e) {
+      lastErr = e
+      if (e.code !== 'OUTLOOK_NOT_RUNNING') throw e  // folder/store errors — don't retry
+      log.warn(`[outlook] ${path.basename(psExe)} → OUTLOOK_NOT_RUNNING, ${candidates.length > 1 ? 'retrying with 32-bit PS' : 'no more candidates'}`)
+    }
+  }
+  throw lastErr
 }
 
 // Check if Outlook.exe is currently running
@@ -65,14 +92,18 @@ async function getFolders() {
 
 // Fetch emails from a folder. folderPath = "StoreName/Folder/Sub/..."
 async function getEmails(folderPath, sinceDate, toDate, maxEmails = 100) {
+  log.info(`[outlook] getEmails folder="${folderPath}"  since=${sinceDate}  to=${toDate || '(none)'}  max=${maxEmails}`)
   const args = ['-FolderPath', folderPath, '-SinceDate', sinceDate, '-MaxEmails', String(maxEmails)]
   if (toDate) args.push('-ToDate', toDate)
   const json = await runPs('Get-OutlookEmails.ps1', args)
   if (!json) return []
   try {
     const parsed = JSON.parse(json)
-    return Array.isArray(parsed) ? parsed : [parsed]
+    const emails = Array.isArray(parsed) ? parsed : [parsed]
+    log.info(`[outlook] getEmails returned ${emails.length} email(s)`)
+    return emails
   } catch {
+    log.error('[outlook] getEmails — failed to parse PS JSON output')
     return []
   }
 }

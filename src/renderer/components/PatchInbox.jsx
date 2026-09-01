@@ -28,6 +28,7 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
   const [scriptFile, setScriptFile]   = useState(null)  // single patch_file for row-level view
   const [masterScript, setMasterScript] = useState(null) // array of {file,patchSubject} for toolbar view
   const [showDetection, setShowDetection] = useState(false)
+  const [serverOffline, setServerOffline] = useState(false)
 
   const load = useCallback(async () => {
     if (!app) return
@@ -35,16 +36,40 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
     setSelected(new Set())
     try {
       const filters = tab !== 'all' ? { status: tab } : {}
-      const rows = await window.api.invoke('patch:list', { appId: app.id, ...filters })
 
-      // Auto-detect deployment status by comparing file dates with the app directory
+      // Run reachability check and patch list fetch in parallel so the ping
+      // does not add latency to the normal (online) case.
+      const [reachResult, rows] = await Promise.all([
+        window.api.invoke('app:check-reachable', { appId: app.id }).catch(() => ({ reachable: true })),
+        window.api.invoke('patch:list', { appId: app.id, ...filters })
+      ])
+
+      setServerOffline(!reachResult.reachable)
+
+      if (!reachResult.reachable) {
+        setPatches(rows)
+        return
+      }
+
+      // Auto-detect deployment status by comparing file dates with the app directory.
+      // Race against a 5-second timeout — if the server share is unreachable, Windows
+      // fs calls hang; we show an offline warning instead of freezing the UI.
       const stagedIds = rows.filter(p => p.status === 'staged').map(p => p.id)
       if (stagedIds.length) {
-        const { updated } = await window.api.invoke('patch:auto-detect-status', { patchIds: stagedIds })
-        if (updated.length > 0) {
-          const refreshed = await window.api.invoke('patch:list', { appId: app.id, ...filters })
-          setPatches(refreshed)
-          return
+        const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000))
+        try {
+          const { updated } = await Promise.race([
+            window.api.invoke('patch:auto-detect-status', { patchIds: stagedIds }),
+            timeout
+          ])
+          if (updated.length > 0) {
+            const refreshed = await window.api.invoke('patch:list', { appId: app.id, ...filters })
+            setPatches(refreshed)
+            return
+          }
+        } catch (e) {
+          if (e.message === 'timeout') setServerOffline(true)
+          // Non-timeout errors: still show patches, just skip auto-detect
         }
       }
 
@@ -54,7 +79,10 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
     }
   }, [app?.id, tab, refreshKey])
 
+  useEffect(() => { setServerOffline(false) }, [app?.id])
+
   useEffect(() => { load() }, [load])
+
 
   function openFolder(folderPath) {
     window.api.invoke('shell:open-folder', folderPath)
@@ -140,7 +168,7 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
       `Build and upload WAR for ${app.name}?\n\nThe existing WAR on the server will be renamed to a backup first.`,
       async () => {
         setConfirm(null)
-        setWarState({ running: true, steps: [], pct: null, error: null })
+        setWarState({ _appId: app.id, running: true, steps: [], pct: null, error: null })
         const cleanup = window.api.on?.('war:progress', ({ step, pct }) => {
           setWarState(s => {
             if (!s) return s
@@ -150,7 +178,7 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
         })
         const res = await window.api.invoke('war:deploy', { appId: app.id })
         cleanup?.()
-        setWarState({ running: false, steps: res.steps || [], pct: res.error ? null : 100, error: res.error || null })
+        setWarState({ _appId: app.id, running: false, steps: res.steps || [], pct: res.error ? null : 100, error: res.error || null })
       },
       { confirmLabel: 'Deploy WAR' }
     )
@@ -161,9 +189,9 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
       `Restart Tomcat on ${app.name} server?`,
       async () => {
         setConfirm(null)
-        setTomcatState({ running: true, result: null })
+        setTomcatState({ _appId: app.id, running: true, result: null })
         const res = await window.api.invoke('tomcat:restart', { appId: app.id })
-        setTomcatState({ running: false, result: res })
+        setTomcatState({ _appId: app.id, running: false, result: res })
       },
       { confirmLabel: 'Restart Tomcat' }
     )
@@ -221,6 +249,10 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
     )
   ).length
 
+  // Only show war/tomcat state that belongs to the currently viewed app
+  const curWarState    = warState?._appId    === app?.id ? warState    : null
+  const curTomcatState = tomcatState?._appId === app?.id ? tomcatState : null
+
   const hasTomcat = app && (app.tomcat_remote_path || app.tomcat_service_name)
   const hasWar    = app && app.deployment_mode === 'sftp' && app.war_name && app.local_src_path
 
@@ -240,6 +272,12 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
 
   return (
     <div className="patch-inbox">
+      {serverOffline && (
+        <div className="inbox-offline-banner">
+          <XCircleIcon size={14} />
+          Application server unreachable — deployment status check skipped. Patches are shown as last known state.
+        </div>
+      )}
       <div className="inbox-toolbar">
         <div className="tab-group">
           {STATUS_TABS.map(t => (
@@ -288,7 +326,8 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
           <button
             className="btn btn-detect btn-sm icon-btn"
             onClick={() => setShowDetection(true)}
-            title="Check which patches and merge files are already deployed by comparing with app directory"
+            disabled={serverOffline}
+            title={serverOffline ? 'Server unreachable' : 'Check which patches and merge files are already deployed by comparing with app directory'}
           >
             <SearchIcon size={13} />
             Detect Status
@@ -298,11 +337,11 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
             <button
               className="btn btn-war btn-sm icon-btn"
               onClick={handleDeployWar}
-              disabled={warState?.running}
-              title="Build WAR from local source and upload to server"
+              disabled={curWarState?.running || serverOffline}
+              title={serverOffline ? 'Server unreachable' : 'Build WAR from local source and upload to server'}
             >
               <PackageIcon size={13} />
-              {warState?.running ? 'Building…' : 'Deploy WAR'}
+              {curWarState?.running ? 'Building…' : 'Deploy WAR'}
             </button>
           )}
 
@@ -310,11 +349,11 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
             <button
               className="btn btn-tomcat btn-sm icon-btn"
               onClick={handleRestartTomcat}
-              disabled={tomcatState?.running}
-              title="Restart Tomcat on the remote server"
+              disabled={curTomcatState?.running || serverOffline}
+              title={serverOffline ? 'Server unreachable' : 'Restart Tomcat on the remote server'}
             >
               <ServerIcon size={13} />
-              {tomcatState?.running ? 'Restarting…' : 'Restart Tomcat'}
+              {curTomcatState?.running ? 'Restarting…' : 'Restart Tomcat'}
             </button>
           )}
 
@@ -327,7 +366,12 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
             Archive {selected.size > 0 ? `(${selected.size})` : 'All'}
           </button>
 
-          <button className="btn btn-primary btn-sm icon-btn" onClick={onFetch}>
+          <button
+            className="btn btn-primary btn-sm icon-btn"
+            onClick={onFetch}
+            disabled={serverOffline}
+            title={serverOffline ? 'Server unreachable' : undefined}
+          >
             <MailIcon size={13} />
             Fetch Emails
           </button>
@@ -369,70 +413,70 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
         </div>
       )}
 
-      {warState && (
-        <div className={`war-panel ${warState.error ? 'war-panel--error' : warState.running ? 'war-panel--running' : 'war-panel--ok'}`}>
+      {curWarState && (
+        <div className={`war-panel ${curWarState.error ? 'war-panel--error' : curWarState.running ? 'war-panel--running' : 'war-panel--ok'}`}>
           <div className="war-panel-header">
             <span className="war-panel-icon">
-              {warState.running
+              {curWarState.running
                 ? <span className="war-spinner" />
-                : warState.error
+                : curWarState.error
                   ? <XCircleIcon size={15} />
                   : <CheckCircleIcon size={15} />}
             </span>
             <span className="war-panel-title">
-              {warState.running
+              {curWarState.running
                 ? 'Building & uploading WAR…'
-                : warState.error
+                : curWarState.error
                   ? 'WAR deploy failed'
                   : 'WAR deployed successfully'}
             </span>
-            {!warState.running && (
+            {!curWarState.running && (
               <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', padding: '2px 6px' }} onClick={() => setWarState(null)}>✕</button>
             )}
           </div>
 
-          {warState.pct != null && (
+          {curWarState.pct != null && (
             <div className="war-progress-wrap">
               <div className="war-progress-bar">
-                <div className="war-progress-fill" style={{ width: `${warState.pct}%` }} />
+                <div className="war-progress-fill" style={{ width: `${curWarState.pct}%` }} />
               </div>
-              <span className="war-progress-pct">{warState.pct}%</span>
+              <span className="war-progress-pct">{curWarState.pct}%</span>
             </div>
           )}
 
-          {warState.steps.length > 0 && (
+          {curWarState.steps.length > 0 && (
             <div className="war-steps">
-              {warState.steps.map((s, i) => <div key={i} className="war-step-row">{s}</div>)}
-              {warState.error && <div className="war-step-row war-step-row--error">{warState.error}</div>}
+              {curWarState.steps.map((s, i) => <div key={i} className="war-step-row">{s}</div>)}
+              {curWarState.error && <div className="war-step-row war-step-row--error">{curWarState.error}</div>}
             </div>
           )}
         </div>
       )}
 
-      {tomcatState && (
-        <div className={`war-panel ${tomcatState.running ? 'war-panel--running' : tomcatState.result?.success ? 'war-panel--ok' : 'war-panel--error'}`}>
+      {curTomcatState && (
+        <div className={`war-panel ${curTomcatState.running ? 'war-panel--running' : curTomcatState.result?.success ? 'war-panel--ok' : 'war-panel--error'}`}>
           <div className="war-panel-header">
             <span className="war-panel-icon">
-              {tomcatState.running
+              {curTomcatState.running
                 ? <span className="war-spinner" />
-                : tomcatState.result?.success
+                : curTomcatState.result?.success
                   ? <CheckCircleIcon size={15} />
                   : <XCircleIcon size={15} />}
             </span>
             <span className="war-panel-title">
-              {tomcatState.running
+              {curTomcatState.running
                 ? 'Restarting Tomcat…'
-                : tomcatState.result?.success
+                : curTomcatState.result?.success
                   ? 'Tomcat restarted'
-                  : `Tomcat restart failed: ${tomcatState.result?.error}`}
+                  : `Tomcat restart failed: ${curTomcatState.result?.error}`}
             </span>
-            {!tomcatState.running && (
+            {!curTomcatState.running && (
               <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', padding: '2px 6px' }} onClick={() => setTomcatState(null)}>✕</button>
             )}
           </div>
-          {tomcatState.result?.output && (
+          {curTomcatState.result?.output && (
             <div className="war-steps">
-              <div className="war-step-row" style={{ whiteSpace: 'pre-wrap' }}>{tomcatState.result.output}</div>
+              <div className="war-step-row" style={{ whiteSpace: 'pre-wrap' }}>{curTomcatState.result.output}</div>
             </div>
           )}
         </div>
@@ -478,6 +522,7 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
             onMarkDeployed={handleMarkDeployed}
             onViewScript={file => setScriptFile(file)}
             onPathSaved={load}
+            serverOffline={serverOffline}
           />
         ))}
       </div>

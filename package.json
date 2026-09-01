@@ -36,9 +36,10 @@
     "appId": "com.patchmanager.app",
     "productName": "Patch Manager",
     "win": {
-      "target": "nsis",
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
       "icon": "resources/icon.ico"
     },
+    "differentialPackage": true,
     "files": [
       "dist/**/*",
       "electron.js",

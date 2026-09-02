@@ -41,6 +41,9 @@ export default function App() {
   const [mergeTarget, setMergeTarget]     = useState(null)
   const [deployPatchId, setDeployPatchId] = useState(null)
 
+  // Background fetch state — shown as an inline panel in PatchInbox
+  const [fetchState, setFetchState] = useState(null) // null | { running, result, error }
+
   // Inbox refresh counter
   const [inboxKey, setInboxKey] = useState(0)
   const refreshInbox = () => setInboxKey(k => k + 1)
@@ -78,9 +81,19 @@ export default function App() {
 
   function handleConfigCancel() { setEditAppId(null); setView('dashboard') }
 
-  function handleFetchComplete(result) {
-    refreshInbox()
-    if (result?.missingPaths?.length) setMissingPaths(result.missingPaths)
+  async function startFetch(config) {
+    setShowFetch(false)
+    setFetchState({ running: true, result: null, error: null, appIds: config.appIds })
+    try {
+      const res = await window.api.invoke('outlook:fetch', {
+        appIds: config.appIds, sinceDate: config.since, toDate: config.toDate
+      })
+      setFetchState({ running: false, result: res, error: null, appIds: config.appIds })
+      refreshInbox()
+      if (res?.missingPaths?.length) setMissingPaths(res.missingPaths)
+    } catch (e) {
+      setFetchState({ running: false, result: null, error: e.message, appIds: config.appIds })
+    }
   }
 
   const selectedApp = apps.find(a => a.id === selectedAppId)
@@ -159,6 +172,8 @@ export default function App() {
                 onMerge={target => setMergeTarget(target)}
                 onDeploy={patchId => setDeployPatchId(patchId)}
                 refreshKey={inboxKey}
+                fetchState={fetchState}
+                onClearFetch={() => setFetchState(null)}
               />
             </div>
           </>
@@ -188,7 +203,7 @@ export default function App() {
         <FetchDialog
           apps={apps}
           onClose={() => setShowFetch(false)}
-          onComplete={result => { setShowFetch(false); handleFetchComplete(result) }}
+          onStart={startFetch}
         />
       )}
 

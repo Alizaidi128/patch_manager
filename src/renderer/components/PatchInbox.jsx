@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import PatchRow from './PatchRow'
 import ConfirmDialog from './ConfirmDialog'
 import ScriptViewModal from './ScriptViewModal'
-import DetectionModal from './DetectionModal'
+import DetectionResults from './DetectionResults'
 import {
   RocketIcon, TrashIcon, MailIcon, PackageIcon, ServerIcon,
   UndoIcon, RefreshCwIcon, CheckCircleIcon, XCircleIcon, InboxIcon, EyeIcon, ArchiveIcon, SearchIcon
@@ -15,7 +15,7 @@ const STATUS_TABS = [
   { key: 'skipped',  label: 'Skipped' },
 ]
 
-export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey }) {
+export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey, fetchState, onClearFetch }) {
   const [patches, setPatches]       = useState([])
   const [tab, setTab]               = useState('all')
   const [loading, setLoading]       = useState(false)
@@ -25,13 +25,15 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
   const [confirm, setConfirm]       = useState(null)
   const [warState, setWarState]       = useState(null)
   const [tomcatState, setTomcatState] = useState(null)
-  const [scriptFile, setScriptFile]   = useState(null)  // single patch_file for row-level view
-  const [masterScript, setMasterScript] = useState(null) // array of {file,patchSubject} for toolbar view
-  const [showDetection, setShowDetection] = useState(false)
+  const [detectState, setDetectState] = useState(null) // { _appId, running, data, error }
+  const [scriptFile, setScriptFile]   = useState(null)
+  const [masterScript, setMasterScript] = useState(null)
   const [serverOffline, setServerOffline] = useState(false)
+  const loadGenRef = useRef(0)
 
   const load = useCallback(async () => {
     if (!app) return
+    const gen = ++loadGenRef.current
     setLoading(true)
     setSelected(new Set())
     try {
@@ -43,6 +45,9 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
         window.api.invoke('app:check-reachable', { appId: app.id }).catch(() => ({ reachable: true })),
         window.api.invoke('patch:list', { appId: app.id, ...filters })
       ])
+
+      // Bail out if a newer load() has started (app switched while we were waiting)
+      if (loadGenRef.current !== gen) return
 
       setServerOffline(!reachResult.reachable)
 
@@ -62,12 +67,15 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
             window.api.invoke('patch:auto-detect-status', { patchIds: stagedIds }),
             timeout
           ])
+          if (loadGenRef.current !== gen) return
           if (updated.length > 0) {
             const refreshed = await window.api.invoke('patch:list', { appId: app.id, ...filters })
+            if (loadGenRef.current !== gen) return
             setPatches(refreshed)
             return
           }
         } catch (e) {
+          if (loadGenRef.current !== gen) return
           if (e.message === 'timeout') setServerOffline(true)
           // Non-timeout errors: still show patches, just skip auto-detect
         }
@@ -75,11 +83,11 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
 
       setPatches(rows)
     } finally {
-      setLoading(false)
+      if (loadGenRef.current === gen) setLoading(false)
     }
   }, [app?.id, tab, refreshKey])
 
-  useEffect(() => { setServerOffline(false) }, [app?.id])
+  useEffect(() => { setServerOffline(false); setDetectState(null) }, [app?.id])
 
   useEffect(() => { load() }, [load])
 
@@ -198,6 +206,16 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
   }
 
 
+  async function handleDetect() {
+    setDetectState({ _appId: app.id, running: true, data: null, error: null })
+    try {
+      const data = await window.api.invoke('patch:detect-all', { appId: app.id })
+      setDetectState({ _appId: app.id, running: false, data, error: null })
+    } catch (e) {
+      setDetectState({ _appId: app.id, running: false, data: null, error: e.message })
+    }
+  }
+
   async function handleArchive() {
     const patchIds = selected.size > 0
       ? [...selected]
@@ -249,9 +267,10 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
     )
   ).length
 
-  // Only show war/tomcat state that belongs to the currently viewed app
+  // Only show state that belongs to the currently viewed app
   const curWarState    = warState?._appId    === app?.id ? warState    : null
   const curTomcatState = tomcatState?._appId === app?.id ? tomcatState : null
+  const curDetectState = detectState?._appId === app?.id ? detectState : null
 
   const hasTomcat = app && (app.tomcat_remote_path || app.tomcat_service_name)
   const hasWar    = app && app.deployment_mode === 'sftp' && app.war_name && app.local_src_path
@@ -325,12 +344,12 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
 
           <button
             className="btn btn-detect btn-sm icon-btn"
-            onClick={() => setShowDetection(true)}
-            disabled={serverOffline}
+            onClick={handleDetect}
+            disabled={curDetectState?.running || serverOffline}
             title={serverOffline ? 'Server unreachable' : 'Check which patches and merge files are already deployed by comparing with app directory'}
           >
             <SearchIcon size={13} />
-            Detect Status
+            {curDetectState?.running ? 'Detecting…' : 'Detect Status'}
           </button>
 
           {hasWar && (
@@ -482,7 +501,63 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
         </div>
       )}
 
-      <div className="inbox-list">
+      {fetchState && fetchState.appIds?.includes(app?.id) && (
+        <div className={`war-panel ${fetchState.error ? 'war-panel--error' : fetchState.running ? 'war-panel--running' : 'war-panel--ok'}`}>
+          <div className="war-panel-header">
+            <span className="war-panel-icon">
+              {fetchState.running
+                ? <span className="war-spinner" />
+                : fetchState.error
+                  ? <XCircleIcon size={15} />
+                  : <CheckCircleIcon size={15} />}
+            </span>
+            <span className="war-panel-title">
+              {fetchState.running
+                ? 'Fetching emails from Outlook… Do not close Outlook.'
+                : fetchState.error
+                  ? `Fetch failed: ${fetchState.error}`
+                  : `Fetch complete — ${fetchState.result?.fetched ?? 0} new email${fetchState.result?.fetched !== 1 ? 's' : ''} imported${fetchState.result?.duplicates ? `, ${fetchState.result.duplicates} skipped` : ''}`}
+            </span>
+            {!fetchState.running && (
+              <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', padding: '2px 6px' }} onClick={onClearFetch}>✕</button>
+            )}
+          </div>
+          {!fetchState.running && fetchState.result?.errors?.length > 0 && (
+            <div className="war-steps">
+              {fetchState.result.errors.map((e, i) => (
+                <div key={i} className="war-step-row war-step-row--error">{e.appName}: {e.error}</div>
+              ))}
+            </div>
+          )}
+          {!fetchState.running && fetchState.result?.missingPaths?.length > 0 && (
+            <div className="war-steps">
+              <div className="war-step-row" style={{ color: 'var(--warning)' }}>
+                ⚠ {fetchState.result.missingPaths.length} file{fetchState.result.missingPaths.length !== 1 ? 's' : ''} need a deployment path — check the prompt.
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {curDetectState?.error && !curDetectState.running && (
+        <div className="war-panel war-panel--error">
+          <div className="war-panel-header">
+            <span className="war-panel-icon"><XCircleIcon size={15} /></span>
+            <span className="war-panel-title">Detection failed: {curDetectState.error}</span>
+            <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', padding: '2px 6px' }} onClick={() => setDetectState(null)}>✕</button>
+          </div>
+        </div>
+      )}
+
+      {curDetectState?.data && !curDetectState.running && (
+        <DetectionResults
+          data={curDetectState.data}
+          onClose={() => setDetectState(null)}
+          onRedetect={handleDetect}
+        />
+      )}
+
+      <div className="inbox-list" style={curDetectState?.data && !curDetectState.running ? { display: 'none' } : undefined}>
         {loading && patches.length === 0 && (
           <div className="inbox-loading">Loading patches…</div>
         )}
@@ -551,13 +626,6 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
         />
       )}
 
-      {showDetection && (
-        <DetectionModal
-          appId={app.id}
-          appName={app.name}
-          onClose={() => { setShowDetection(false); load() }}
-        />
-      )}
     </div>
   )
 }

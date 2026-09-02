@@ -2674,6 +2674,35 @@ body {
 }
 
 
+/* ---- Inline detection panel (replaces modal) ---- */
+.detect-inline-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+}
+
+.detect-inline-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.detect-inline-panel .det-legend {
+  flex-shrink: 0;
+}
+
+.detect-inline-panel .det-patch-list {
+  overflow-y: auto;
+  flex: 1;
+}
+
 /* ---- Light mode overrides ---- */
 [data-theme="light"] .det-patch-card--deployed { border-left-color: #1a7a50; }
 [data-theme="light"] .det-patch-card--pending  { border-left-color: #a87000; }

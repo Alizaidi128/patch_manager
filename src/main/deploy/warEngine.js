@@ -83,7 +83,9 @@ async function restartTomcatSSH(app) {
   const { Client } = require('ssh2')
 
   let cmd
-  if (app.tomcat_remote_path) {
+  if (app.tomcat_restart_cmd) {
+    cmd = app.tomcat_restart_cmd
+  } else if (app.tomcat_remote_path) {
     const t = app.tomcat_remote_path.replace(/\/$/, '')
     cmd = `${t}/bin/shutdown.sh 2>&1; sleep 4; ${t}/bin/startup.sh 2>&1`
   } else if (app.tomcat_service_name) {
@@ -93,15 +95,33 @@ async function restartTomcatSSH(app) {
     throw new Error('No Tomcat path or service name configured')
   }
 
+  // Apply run-as-user wrapper (same as deployEngine.restartTomcatSFTP)
+  const runAs = (app.tomcat_run_as_user || '').trim()
+  if (runAs) {
+    const escaped = cmd.replace(/'/g, `'"'"'`)
+    cmd = `sudo su - ${runAs} -c '${escaped}'`
+  }
+
   return new Promise((resolve, reject) => {
     const conn = new Client()
     let out = ''
     conn.on('ready', () => {
-      conn.exec(cmd, (err, stream) => {
+      const execOpts = runAs ? { pty: { rows: 24, cols: 80, term: 'vt100' } } : {}
+      conn.exec(cmd, execOpts, (err, stream) => {
         if (err) { conn.end(); return reject(err) }
         stream.on('data', d => { out += d.toString() })
         stream.stderr.on('data', d => { out += d.toString() })
-        stream.on('close', () => { conn.end(); resolve(out.trim()) })
+        stream.on('close', (code) => {
+          conn.end()
+          // "Permission denied" on log files means startup failed even if exit code is 0
+          // (startup.sh launches Tomcat as background process and exits 0 immediately)
+          const permDenied = /permission denied/i.test(out)
+          if (code !== 0 || permDenied) {
+            reject(new Error(out.trim() || `Tomcat restart exited with code ${code}`))
+          } else {
+            resolve(out.trim())
+          }
+        })
       })
     })
     conn.on('error', reject)

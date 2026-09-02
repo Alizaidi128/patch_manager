@@ -82,11 +82,6 @@ function resolveDestSFTP(file, app) {
 
 function backupAndCopySMB(src, dest) {
   fs.mkdirSync(path.dirname(dest), { recursive: true })
-  if (fs.existsSync(dest)) {
-    const srcMtime  = fs.statSync(src).mtimeMs
-    const destMtime = fs.statSync(dest).mtimeMs
-    if (srcMtime <= destMtime) return null  // dest is same age or newer — skip
-  }
   fs.copyFileSync(src, dest)
   return null
 }
@@ -94,16 +89,14 @@ function backupAndCopySMB(src, dest) {
 function plainCopy(src, dest) {
   fs.mkdirSync(path.dirname(dest), { recursive: true })
   if (fs.existsSync(dest)) {
-    const srcMtime  = fs.statSync(src).mtimeMs
-    const destMtime = fs.statSync(dest).mtimeMs
-    if (srcMtime <= destMtime) return  // dest is same age or newer — skip
+    fs.copyFileSync(dest, `${dest}.bak-${Date.now()}`)
   }
   fs.copyFileSync(src, dest)
 }
 
 function deployGiasLocal(extractedDir, localRoot) {
   const deployRoot = giasDeployRoot(extractedDir)
-  const srcFiles = walkDir(deployRoot)
+  const srcFiles = walkDir(deployRoot).filter(src => isAllowedGiasFile(path.relative(deployRoot, src)))
   const deployed = []
   for (const src of srcFiles) {
     const rel  = path.relative(deployRoot, src)
@@ -124,6 +117,20 @@ function deployFileSMB(file, app) {
 // Strip it so files land relative to app root. But do NOT strip known structural
 // web-app folders like WEB-INF — those ARE part of the path.
 const STRUCTURAL_DIRS = /^(WEB-INF|META-INF|genins|classes|lib|webapps|src|resources|static|templates)$/i
+
+// Whitelist of valid top-level app folders. Files from a GIAS patch whose first path
+// component is NOT in this set are ignored — they belong to a different app or are
+// packaging artefacts that must not land in this app's directory.
+const ALLOWED_APP_FOLDERS = new Set([
+  'di', 'genins', 'glas', 'gnled', 'healthins',
+  'meta-inf', 'para', 'param', 'secman',
+  'shmalib', 'shsm', 'web-inf', 'wf',
+])
+
+function isAllowedGiasFile(relPath) {
+  const first = relPath.split(/[\\/]/)[0].toLowerCase()
+  return ALLOWED_APP_FOLDERS.has(first)
+}
 
 // Target dir for extracting a GIAS archive — always named after the archive.
 function rarExtractTarget(archivePath) {
@@ -153,7 +160,7 @@ function giasDeployRoot(extractedDir, depth = 0) {
 
 function deployGiasSMB(extractedDir, appRootPath) {
   const deployRoot = giasDeployRoot(extractedDir)
-  const srcFiles = walkDir(deployRoot)
+  const srcFiles = walkDir(deployRoot).filter(src => isAllowedGiasFile(path.relative(deployRoot, src)))
   const deployed = []
   for (const src of srcFiles) {
     const rel  = path.relative(deployRoot, src)
@@ -201,7 +208,7 @@ async function deployGiasSFTP(extractedDir, appRootPath, app) {
   try {
     await sftp.connect(sftpOpts(app))
     const deployRoot = giasDeployRoot(extractedDir)
-    const srcFiles = walkDir(deployRoot)
+    const srcFiles = walkDir(deployRoot).filter(src => isAllowedGiasFile(path.relative(deployRoot, src)))
     for (const src of srcFiles) {
       const rel  = path.relative(deployRoot, src).replace(/\\/g, '/')
       const dest = `${appRootPath.replace(/\\/g, '/')}/${rel}`
@@ -301,31 +308,48 @@ function previewDeploy(patchId, { batchPatchIds = [] } = {}) {
   const deployable    = []
   const nonDeployable = []
 
+  // Email date baseline — used to catch files falsely auto-marked as deployed (same file
+  // in multiple patches; the older patch's deploy updated the server, so the newer patch's
+  // file looks "already deployed" by mtime, but it hasn't been deployed yet from THIS patch).
+  const emailMs = patch.email_date ? new Date(patch.email_date).getTime() : 0
+
   for (const f of files) {
     if (f.deploy_status === 'deployed') {
-      // SFTP: check whether local source folder is missing files or has older versions
-      if (app.deployment_mode === 'sftp' && app.local_src_path && f.local_path) {
-        if (f.file_type === 'gias_patch') {
+      // Check if this "deployed" file actually needs re-deploying, using email_date as baseline.
+      // A file needs re-deploying if the local copy predates this email (meaning a later patch
+      // updated it or the auto-detect was wrong), or if it is missing from the destination.
+      if (emailMs > 0 && f.deploy_target_path && f.file_type !== 'db_script' && f.file_type !== 'reference') {
+        if (f.file_type === 'gias_patch' && f.local_path) {
           const extractedDir = rarExtractDir(f.local_path)
           if (fs.existsSync(extractedDir)) {
             const dRoot    = giasDeployRoot(extractedDir)
             const srcFiles = walkDir(dRoot)
-            const hasNewerOrMissing = srcFiles.some(src => {
-              const dest = path.join(app.local_src_path, path.relative(dRoot, src))
-              return !fs.existsSync(dest) || fs.statSync(src).mtimeMs > fs.statSync(dest).mtimeMs
+            const needsDeploy = srcFiles.some(src => {
+              const dest = path.join(deployRoot, path.relative(dRoot, src))
+              if (!fs.existsSync(dest)) return true
+              try { return fs.statSync(dest).mtimeMs < emailMs } catch { return true }
             })
-            if (hasNewerOrMissing) {
+            if (needsDeploy) {
               const subFiles = srcFiles.map(p => path.relative(dRoot, p))
-              deployable.push({ ...f, action: 'gias', extractedDir, subFiles, deployBase: app.local_src_path, note: 'Re-deploying (newer files in patch)' }); continue
+              deployable.push({ ...f, action: 'gias', extractedDir, subFiles, deployBase: deployRoot, note: 'Re-deploying (local source predates this email)' }); continue
             }
           }
-        } else if (f.deploy_target_path && f.file_type !== 'db_script' && f.file_type !== 'reference') {
-          const localDest = resolveDestSMB(f, app, app.local_src_path)
-          if (!fs.existsSync(localDest)) {
-            deployable.push({ ...f, action: 'deploy', note: 'Re-deploying (missing from local source folder)' }); continue
-          }
+        } else {
+          try {
+            const dest = resolveDestSMB(f, app, deployRoot)
+            if (!dest || !fs.existsSync(dest) || fs.statSync(dest).mtimeMs < emailMs) {
+              deployable.push({ ...f, action: 'deploy', note: 'Re-deploying (destination predates this email)' }); continue
+            }
+          } catch {}
+        }
+      } else if (app.deployment_mode === 'sftp' && app.local_src_path && f.local_path && f.file_type !== 'gias_patch') {
+        // Legacy fallback (no email_date): re-deploy if missing from local source folder
+        const localDest = resolveDestSMB(f, app, app.local_src_path)
+        if (!fs.existsSync(localDest)) {
+          deployable.push({ ...f, action: 'deploy', note: 'Re-deploying (missing from local source folder)' }); continue
         }
       }
+
       nonDeployable.push({ ...f, reason: 'Already deployed', canForce: true }); continue
     }
     if (f.deploy_status === 'skipped') {
@@ -353,42 +377,37 @@ function previewDeploy(patchId, { batchPatchIds = [] } = {}) {
       }
 
       const dRoot    = giasDeployRoot(extractedDir)
-      const srcFiles = walkDir(dRoot)
+      const srcFiles = walkDir(dRoot).filter(src => isAllowedGiasFile(path.relative(dRoot, src)))
       const subFiles = srcFiles.map(p => path.relative(dRoot, p))
 
-      // For local modes (smb / rdp_assisted): check per-file mtime
-      if (deployBase && (app.deployment_mode === 'smb' || app.deployment_mode === 'rdp_assisted')) {
-        const newerInPatch = srcFiles.filter(src => {
+      // Check per-file status using email_date as the reference — not file mtime.
+      // A dest file is considered "already from this patch" if its mtime >= email_date.
+      // This handles the case where two patches share the same archive with identical file mtimes.
+      if (deployBase && emailMs > 0) {
+        const needsDeploy = srcFiles.filter(src => {
           const dest = path.join(deployBase, path.relative(dRoot, src))
-          return !fs.existsSync(dest) || fs.statSync(src).mtimeMs > fs.statSync(dest).mtimeMs
+          if (!fs.existsSync(dest)) return true
+          try { return fs.statSync(dest).mtimeMs < emailMs } catch { return true }
         })
-        if (newerInPatch.length === 0) {
-          const newerInApp = srcFiles.filter(src => {
+        if (needsDeploy.length === 0) {
+          const alreadyDeployed = srcFiles.filter(src => {
             const dest = path.join(deployBase, path.relative(dRoot, src))
-            return fs.existsSync(dest) && fs.statSync(dest).mtimeMs > fs.statSync(src).mtimeMs
+            try { return fs.existsSync(dest) && fs.statSync(dest).mtimeMs >= emailMs } catch { return false }
           })
-          const reason = newerInApp.length
-            ? `${newerInApp.length} app file(s) are newer than patch — check "Re-deploy" to force`
+          const label = app.deployment_mode === 'sftp' ? 'local source' : 'app'
+          const reason = alreadyDeployed.length
+            ? `${alreadyDeployed.length} ${label} file(s) already deployed from this or a later patch`
             : 'All files are already up to date'
           nonDeployable.push({ ...f, reason, canForce: true, subFiles, deployBase }); continue
         }
-      }
-
-      // For SFTP: check per-file mtime vs local_src_path
-      if (deployBase && app.deployment_mode === 'sftp') {
-        const newerInPatch = srcFiles.filter(src => {
+      } else if (deployBase) {
+        // Fallback when no email_date: compare file mtimes directly
+        const needsDeploy = srcFiles.filter(src => {
           const dest = path.join(deployBase, path.relative(dRoot, src))
           return !fs.existsSync(dest) || fs.statSync(src).mtimeMs > fs.statSync(dest).mtimeMs
         })
-        if (newerInPatch.length === 0) {
-          const newerInApp = srcFiles.filter(src => {
-            const dest = path.join(deployBase, path.relative(dRoot, src))
-            return fs.existsSync(dest) && fs.statSync(dest).mtimeMs > fs.statSync(src).mtimeMs
-          })
-          const reason = newerInApp.length
-            ? `${newerInApp.length} local source file(s) are newer — check "Re-deploy" to force`
-            : 'All files are already up to date in local source'
-          nonDeployable.push({ ...f, reason, canForce: true, subFiles, deployBase }); continue
+        if (needsDeploy.length === 0) {
+          nonDeployable.push({ ...f, reason: 'All files are already up to date', canForce: true, subFiles, deployBase }); continue
         }
       }
 
@@ -399,17 +418,22 @@ function previewDeploy(patchId, { batchPatchIds = [] } = {}) {
       nonDeployable.push({ ...f, reason: 'No deployment path set — use Set Path or Preview Merge first' }); continue
     }
 
-    // Compare per-file mtime against the deployed copy (all local-access modes)
+    // Check if the destination is already up to date, using email_date as the reference.
+    // If the dest file was last written after this email arrived, it's already been deployed
+    // (either by this patch on a previous run, or by a later patch that supersedes it).
     if (f.local_path && fs.existsSync(f.local_path) && deployRoot) {
-      const resolveRoot = app.deployment_mode === 'sftp' ? app.local_src_path : null
-      const dest = resolveDestSMB(f, app, resolveRoot)
+      const dest = resolveDestSMB(f, app, deployRoot)
       if (fs.existsSync(dest)) {
-        const srcMtime  = fs.statSync(f.local_path).mtimeMs
-        const destMtime = fs.statSync(dest).mtimeMs
-        if (destMtime > srcMtime) {
-          const reason = `App file is newer (${fmtDate(destMtime)}) — patch is from ${fmtDate(srcMtime)}`
-          nonDeployable.push({ ...f, reason, canForce: true }); continue
-        }
+        try {
+          const destMtime = fs.statSync(dest).mtimeMs
+          const alreadyDone = emailMs > 0 ? destMtime >= emailMs : destMtime > fs.statSync(f.local_path).mtimeMs
+          if (alreadyDone) {
+            const reason = emailMs > 0
+              ? `Already deployed (file updated ${fmtDate(destMtime)}, email received ${fmtDate(emailMs)})`
+              : `App file is newer (${fmtDate(destMtime)}) than patch file`
+            nonDeployable.push({ ...f, reason, canForce: true }); continue
+          }
+        } catch {}
       }
     }
 
@@ -561,14 +585,22 @@ function markManual({ patchId, fileIds }) {
 
 // Check each staged patch's files against the deployed app directory.
 // Returns array of { fileId, status: 'deployed'|'pending' } for files that have a deploy target.
-// 'deployed'  → app file exists and its mtime >= patch file mtime (patch already applied)
-// 'pending'   → patch file is newer than app file, or app file is missing
+//
+// IMPORTANT: We compare against email_date (when this email arrived), NOT the local patch file's
+// mtime. Two patches can contain the same file with identical mtimes — using file mtime would
+// falsely mark Patch B as deployed just because Patch A already put that file on the server.
+// Using email_date means: "was the server file updated after we received this email?" If yes →
+// deployed. If the server file predates this email → still pending.
 function checkDeploymentStatus(patchId) {
   try {
     const { patch, app, files } = getContext(patchId)
     if (patch.status !== 'staged') return []
     const deployRoot = localDeployRoot(app)
     const results = []
+
+    // Baseline: the moment this email arrived. Server files must be newer than this to count
+    // as having been deployed FROM this patch (or a later one that supersedes it).
+    const emailMs = patch.email_date ? new Date(patch.email_date).getTime() : 0
 
     for (const f of files) {
       if (f.deploy_status !== 'pending') continue
@@ -578,14 +610,14 @@ function checkDeploymentStatus(patchId) {
         const extractedDir = rarExtractDir(f.local_path)
         if (!fs.existsSync(extractedDir)) continue
         const dRoot    = giasDeployRoot(extractedDir)
-        const srcFiles = walkDir(dRoot)
+        const srcFiles = walkDir(dRoot).filter(src => isAllowedGiasFile(path.relative(dRoot, src)))
         if (!srcFiles.length) continue
 
-        const allDeployed = srcFiles.every(src => {
+        const allDeployed = emailMs > 0 && srcFiles.every(src => {
           const dest = path.join(deployRoot, path.relative(dRoot, src))
           if (!fs.existsSync(dest)) return false
           try {
-            return fs.statSync(dest).mtimeMs >= fs.statSync(src).mtimeMs
+            return fs.statSync(dest).mtimeMs >= emailMs
           } catch { return false }
         })
         results.push({ fileId: f.id, status: allDeployed ? 'deployed' : 'pending' })
@@ -594,10 +626,12 @@ function checkDeploymentStatus(patchId) {
 
       if (f.deploy_target_path && f.local_path &&
           f.file_type !== 'db_script' && f.file_type !== 'reference') {
-        const dest = resolveDestSMB(f, app, null)
+        // For SFTP mode: check the local_src_path folder (where files land before WAR build),
+        // not the remote server path. deployRoot already resolves to local_src_path for SFTP.
+        const dest = resolveDestSMB(f, app, deployRoot)
         if (!dest || !fs.existsSync(dest)) { results.push({ fileId: f.id, status: 'pending' }); continue }
         try {
-          const deployed = fs.statSync(dest).mtimeMs >= fs.statSync(f.local_path).mtimeMs
+          const deployed = emailMs > 0 && fs.statSync(dest).mtimeMs >= emailMs
           results.push({ fileId: f.id, status: deployed ? 'deployed' : 'pending' })
         } catch { results.push({ fileId: f.id, status: 'pending' }) }
       }

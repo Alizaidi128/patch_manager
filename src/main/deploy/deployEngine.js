@@ -140,11 +140,12 @@ function rarExtractDir(archivePath) {
   return legacy  // fallback path (may not exist — callers must check)
 }
 
-function giasDeployRoot(extractedDir) {
+function giasDeployRoot(extractedDir, depth = 0) {
+  if (depth > 5) return extractedDir  // guard against infinite loops
   try {
     const entries = fs.readdirSync(extractedDir, { withFileTypes: true })
     if (entries.length === 1 && entries[0].isDirectory() && !STRUCTURAL_DIRS.test(entries[0].name)) {
-      return path.join(extractedDir, entries[0].name)
+      return giasDeployRoot(path.join(extractedDir, entries[0].name), depth + 1)
     }
   } catch {}
   return extractedDir

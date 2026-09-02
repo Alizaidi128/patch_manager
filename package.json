@@ -1,6 +1,6 @@
 {
   "name": "patch-manager",
-  "version": "2.2.2",
+  "version": "2.2.3",
   "description": "Automated patch management for Outlook-received software patches",
   "main": "electron.js",
   "scripts": {
@@ -39,9 +39,8 @@
       "target": [{ "target": "nsis", "arch": ["x64"] }],
       "icon": "resources/icon.ico"
     },
-    "differentialPackage": true,
     "files": [
-      "dist/**/*",
+      "dist/renderer/**/*",
       "electron.js",
       "preload.js",
       "src/main/**/*",

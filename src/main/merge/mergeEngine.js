@@ -272,24 +272,43 @@ async function applyMerge(patchFileId, mergedContent) {
     ? resolveAllTargets(file.deploy_target_path, file.original_filename)
     : [resolveFilePath(file.deploy_target_path, file.original_filename)]
 
+  let written = 0
   for (const resolvedPath of targets) {
     const existing = await readFromServer(app, resolvedPath)
-    if (existing && existing.trim().length > 0) {
-      const { applyMerge: propsApplyFn } = require('./propsMerge')
-      const result = propsApplyFn(existing, snippet)
-      if (result.length < existing.length * 0.5) continue  // safety — skip this file if result looks wrong
-      await writeToServer(app, resolvedPath, result)
-      logDeployment({
-        patchId: patch.id, patchFileId, appId: patch.app_id,
-        action: 'merge', status: 'success',
-        detail: `Merged ${file.original_filename} → ${resolvedPath}`
-      })
+    if (!existing || existing.trim().length === 0) {
+      log.warn(`[merge:apply] patchFileId=${patchFileId} — skipping "${resolvedPath}" (empty or unreadable)`)
+      continue
     }
+
+    let result
+    if (file.file_type === 'xml_merge') {
+      result = xmlApply(existing, snippet)
+    } else {
+      result = propsApply(existing, snippet)
+    }
+
+    if (result.length < existing.length * 0.5) {
+      log.warn(`[merge:apply] patchFileId=${patchFileId} — safety skip "${resolvedPath}" (result ${result.length} < 50% of existing ${existing.length})`)
+      continue
+    }
+
+    await writeToServer(app, resolvedPath, result)
+    written++
+    log.info(`[merge:apply] patchFileId=${patchFileId} — wrote "${resolvedPath}" (+${result.length - existing.length} bytes)`)
+    logDeployment({
+      patchId: patch.id, patchFileId, appId: patch.app_id,
+      action: 'merge', status: 'success',
+      detail: `Merged ${file.original_filename} → ${resolvedPath}`
+    })
+  }
+
+  if (written === 0 && targets.length > 0) {
+    log.warn(`[merge:apply] patchFileId=${patchFileId} — no files written (all skipped)`)
   }
 
   updatePatchFile(patchFileId, { merge_status: 'merged', deploy_status: 'deployed' })
 
-  return { success: true, appliedTo: targets.length }
+  return { success: true, appliedTo: written }
 }
 
 module.exports = { previewMerge, applyMerge, resolveFilePath }

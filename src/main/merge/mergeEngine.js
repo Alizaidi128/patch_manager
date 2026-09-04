@@ -359,4 +359,56 @@ async function applyMerge(patchFileId, mergedContent) {
   return { success: true, appliedTo: written }
 }
 
-module.exports = { previewMerge, applyMerge, resolveFilePath }
+// Called from the deploy flow when a props_merge / xml_merge file is deployed directly
+// (without going through Preview Merge first). Reads snippet and target files, merges,
+// and writes back — same engine as applyMerge but without needing pre-computed content.
+async function autoMerge(patchFileId, { patchId, appId } = {}) {
+  const { file, patch, app } = getFileWithContext(patchFileId)
+
+  if (!file.local_path || !fs.existsSync(file.local_path)) {
+    throw new Error(`Patch file not found locally: ${file.local_path}`)
+  }
+  const snippet = fs.readFileSync(file.local_path, 'utf8')
+  if (!snippet || snippet.trim().length === 0) {
+    throw new Error(`Patch file "${file.original_filename}" is empty — nothing to merge.`)
+  }
+
+  const targets = (file.file_type === 'props_merge')
+    ? resolveAllTargets(file.deploy_target_path, file.original_filename, snippet)
+    : [resolveFilePath(file.deploy_target_path, file.original_filename)]
+
+  let written = 0
+  const errors = []
+  for (const resolvedPath of targets) {
+    try {
+      const existing = await readFromServer(app, resolvedPath)
+      if (!existing || existing.trim().length === 0) {
+        log.warn(`[merge:auto] ${file.original_filename} — skipping "${resolvedPath}" (empty or unreadable)`)
+        continue
+      }
+      const result = file.file_type === 'xml_merge'
+        ? xmlApply(existing, snippet)
+        : propsApply(existing, snippet)
+      if (result.length < existing.length * 0.5) {
+        log.warn(`[merge:auto] safety skip "${resolvedPath}" (result too small)`)
+        continue
+      }
+      await writeToServer(app, resolvedPath, result)
+      written++
+      log.info(`[merge:auto] merged "${file.original_filename}" → "${resolvedPath}"`)
+      logDeployment({
+        patchId: patch.id, patchFileId, appId: patch.app_id,
+        action: 'merge', status: 'success',
+        detail: `Auto-merged ${file.original_filename} → ${resolvedPath}`
+      })
+    } catch (e) {
+      errors.push(`${path.basename(resolvedPath)}: ${e.message}`)
+    }
+  }
+
+  if (errors.length) throw new Error(errors.join('; '))
+  updatePatchFile(patchFileId, { merge_status: 'merged', deploy_status: 'deployed' })
+  return { success: true, appliedTo: written }
+}
+
+module.exports = { previewMerge, applyMerge, autoMerge, resolveFilePath }

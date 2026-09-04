@@ -64,7 +64,8 @@ function buildDeployPath(detected, app) {
 }
 
 // SQL keyword pattern — used to detect scripts in email body and text attachments
-const SQL_KW = /\b(?:DROP|CREATE|ALTER|INSERT|UPDATE|DELETE|MERGE|TRUNCATE|SELECT\s+\*|BEGIN|COMMIT|ROLLBACK|GRANT|REVOKE|EXECUTE|DECLARE|CALL)\b/i
+// CALL requires CALL word( to avoid matching plain English "Call existing member..."
+const SQL_KW = /\b(?:DROP|CREATE|ALTER|INSERT|UPDATE|DELETE|MERGE|TRUNCATE|SELECT\s+\*|BEGIN|COMMIT|ROLLBACK|GRANT|REVOKE|EXECUTE|DECLARE|CALL(?=\s+\w+\s*\())\b/i
 
 // Strip quoted reply content from email body so we only extract SQL from the LATEST email,
 // not from older messages in the thread that appear as quoted text.
@@ -87,13 +88,14 @@ function stripEmailQuotes(body) {
 // Secondary SQL keywords that confirm a statement is real SQL, not just an English sentence.
 // e.g. "Update properties..." has no SET/FROM/INTO → not SQL.
 // "UPDATE tablename SET col = 1" has SET → real SQL.
-const SQL_STRUCT = /\b(?:SET|FROM|INTO|VALUES|WHERE|JOIN|INNER|LEFT|RIGHT|OUTER|ON|UNION|GROUP\s+BY|ORDER\s+BY|HAVING)\b/i
+// ON removed — too common in English ("stuck on", "depends on"); JOIN/DELETE/UPDATE already cover SQL's ON clauses
+const SQL_STRUCT = /\b(?:SET|FROM|INTO|VALUES|WHERE|JOIN|INNER|LEFT|RIGHT|OUTER|UNION|GROUP\s+BY|ORDER\s+BY|HAVING)\b/i
 
 function extractBodyScript(rawBody) {
   if (!rawBody || !SQL_KW.test(rawBody)) return null
 
   // Lines that start SQL statements
-  const SQL_START = /^[ \t]*(DROP|CREATE|ALTER|INSERT|UPDATE|DELETE|MERGE|TRUNCATE|SELECT\s+\*|BEGIN|COMMIT|ROLLBACK|GRANT|REVOKE|EXECUTE|DECLARE|CALL)\b/i
+  const SQL_START = /^[ \t]*(DROP|CREATE|ALTER|INSERT|UPDATE|DELETE|MERGE|TRUNCATE|SELECT\s+\*|BEGIN|COMMIT|ROLLBACK|GRANT|REVOKE|EXECUTE|DECLARE|CALL(?=\s+\w+\s*\())\b/i
   // Lines that clearly belong to email/signature/log — not SQL
   const NON_SQL = /^[ \t]*(?:(?:From|Sent|To|Cc|Subject|Date)[ \t]*:|(?:Regards|Thanks|Sincerely|Cheers|Best|Dear|Kindly)\b|\[(?:DEBUG|ERROR|INFO|WARN|TRACE)\]|at\s+[\w$.]+|[\w.]+(?:Exception|Error)\s*:|-----)/i
 

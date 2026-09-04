@@ -4,6 +4,7 @@ const os   = require('os')
 const { getDb }                        = require('../db/schema')
 const { updatePatchFile, updatePatch } = require('../db/queries')
 const { logDeployment } = require('../utils/logger')
+const { autoMerge }    = require('../merge/mergeEngine')
 
 // ---- Helpers ----
 
@@ -70,16 +71,23 @@ function resolveDestSMB(file, app, rootOverride) {
 // in the WAR source folder instead of the remote server path.
 function resolveDestLocal(file, app) {
   let p = (file.deploy_target_path || '').trim().replace(/[*?]/g, '').replace(/\\/g, '/')
-  const remoteRoot = (app.app_root_path || '').replace(/\\/g, '/').replace(/\/+$/, '')
+  const localRoot = app.local_src_path || app.app_root_path
+  const remoteRoot  = (app.app_root_path || '').replace(/\\/g, '/').replace(/\/+$/, '')
+  const localRootFw = (localRoot || '').replace(/\\/g, '/').replace(/\/+$/, '')
+
   if (remoteRoot && p.toLowerCase().startsWith(remoteRoot.toLowerCase() + '/')) {
+    // Strip Unix remote root (e.g. /u01/opt/APP/genins/gnled/file.jsp → gnled/file.jsp)
     p = p.slice(remoteRoot.length + 1)
+  } else if (localRootFw && p.toLowerCase().startsWith(localRootFw.toLowerCase() + '/')) {
+    // deploy_target_path was stored as a local Windows path (e.g. D:/Office/APPS/CONVUAT/gnled/...)
+    // Strip it so path.join below doesn't double the root
+    p = p.slice(localRootFw.length + 1)
   } else {
-    p = p.replace(/^\/+/, '') // strip leading slash if no root match
+    p = p.replace(/^\/+/, '') // strip leading Unix slash (no root match)
   }
   if (!p.toLowerCase().endsWith(file.original_filename.toLowerCase())) {
     p = p ? `${p}/${file.original_filename}` : file.original_filename
   }
-  const localRoot = app.local_src_path || app.app_root_path
   return path.join(localRoot, p.replace(/\//g, path.sep))
 }
 
@@ -486,12 +494,17 @@ async function executeDeploy({ patchId, fileIds, restartTomcat }) {
           const deployed = deployGiasLocal(extractedDir, localRoot)
           dest = `${localRoot} (${deployed.length} files)`
           logDeployment({ patchId, patchFileId: f.id, appId: patch.app_id, action: 'deploy-gias', status: 'success', detail: dest })
+        } else if (f.file_type === 'props_merge' || f.file_type === 'xml_merge') {
+          const { appliedTo } = await autoMerge(f.id)
+          dest = `merged into ${appliedTo} file(s)`
         } else {
           dest = resolveDestLocal(f, app)
           plainCopy(f.local_path, dest)
           logDeployment({ patchId, patchFileId: f.id, appId: patch.app_id, action: 'deploy', status: 'success', detail: dest })
         }
-        updatePatchFile(f.id, { deploy_status: 'deployed' })
+        if (f.file_type !== 'props_merge' && f.file_type !== 'xml_merge') {
+          updatePatchFile(f.id, { deploy_status: 'deployed' })
+        }
         results.push({ id: f.id, filename: f.original_filename, success: true, dest })
       } catch (e) {
         updatePatchFile(f.id, { deploy_status: 'failed' })
@@ -521,12 +534,17 @@ async function executeDeploy({ patchId, fileIds, restartTomcat }) {
           const deployed = deployGiasSMB(extractedDir, rdpRoot)
           dest = `${rdpRoot} (${deployed.length} files)`
           logDeployment({ patchId, patchFileId: f.id, appId: patch.app_id, action: 'deploy-gias', status: 'success', detail: dest })
+        } else if (f.file_type === 'props_merge' || f.file_type === 'xml_merge') {
+          const { appliedTo } = await autoMerge(f.id)
+          dest = `merged into ${appliedTo} file(s)`
         } else {
           dest = resolveDestSMB(f, app)
           backupAndCopySMB(f.local_path, dest)
           logDeployment({ patchId, patchFileId: f.id, appId: patch.app_id, action: 'deploy', status: 'success', detail: dest })
         }
-        updatePatchFile(f.id, { deploy_status: 'deployed' })
+        if (f.file_type !== 'props_merge' && f.file_type !== 'xml_merge') {
+          updatePatchFile(f.id, { deploy_status: 'deployed' })
+        }
         results.push({ id: f.id, filename: f.original_filename, success: true, dest })
       } catch (e) {
         updatePatchFile(f.id, { deploy_status: 'failed' })
@@ -553,11 +571,16 @@ async function executeDeploy({ patchId, fileIds, restartTomcat }) {
           dest = `${smbRoot} (${deployed.length} files)`
           logDeployment({ patchId, patchFileId: f.id, appId: patch.app_id, action: 'deploy-gias', status: 'success', detail: dest })
 
+        } else if (f.file_type === 'props_merge' || f.file_type === 'xml_merge') {
+          const { appliedTo } = await autoMerge(f.id)
+          dest = `merged into ${appliedTo} file(s)`
         } else {
           dest = deployFileSMB(f, app)
           logDeployment({ patchId, patchFileId: f.id, appId: patch.app_id, action: 'deploy', status: 'success', detail: dest })
         }
-        updatePatchFile(f.id, { deploy_status: 'deployed' })
+        if (f.file_type !== 'props_merge' && f.file_type !== 'xml_merge') {
+          updatePatchFile(f.id, { deploy_status: 'deployed' })
+        }
         results.push({ id: f.id, filename: f.original_filename, success: true, dest })
       } catch (e) {
         updatePatchFile(f.id, { deploy_status: 'failed' })

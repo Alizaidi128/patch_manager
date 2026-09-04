@@ -84,11 +84,13 @@ function stripEmailQuotes(body) {
   return body.slice(0, cutAt)
 }
 
+// Secondary SQL keywords that confirm a statement is real SQL, not just an English sentence.
+// e.g. "Update properties..." has no SET/FROM/INTO → not SQL.
+// "UPDATE tablename SET col = 1" has SET → real SQL.
+const SQL_STRUCT = /\b(?:SET|FROM|INTO|VALUES|WHERE|JOIN|INNER|LEFT|RIGHT|OUTER|ON|UNION|GROUP\s+BY|ORDER\s+BY|HAVING)\b/i
+
 function extractBodyScript(rawBody) {
   if (!rawBody || !SQL_KW.test(rawBody)) return null
-  // Require at least one statement-terminating semicolon — prevents false positives
-  // where SQL keywords appear as plain English in an email body (e.g. "Update properties of...")
-  if (!/;/.test(rawBody)) return null
 
   // Lines that start SQL statements
   const SQL_START = /^[ \t]*(DROP|CREATE|ALTER|INSERT|UPDATE|DELETE|MERGE|TRUNCATE|SELECT\s+\*|BEGIN|COMMIT|ROLLBACK|GRANT|REVOKE|EXECUTE|DECLARE|CALL)\b/i
@@ -104,7 +106,13 @@ function extractBodyScript(rawBody) {
   const flush = () => {
     if (current.length > 0) {
       const s = current.join('\n').trim()
-      if (s && SQL_KW.test(s)) stmts.push(s)
+      // Accept as SQL if: has a structural keyword (SET/FROM/INTO/WHERE/etc.), OR
+      // spans multiple lines (real SQL rarely fits on one line), OR ends with semicolon.
+      // This rejects English prose like "Update properties of Bank Recon..." which has
+      // none of these markers.
+      if (s && SQL_KW.test(s) && (SQL_STRUCT.test(s) || current.length > 1 || s.endsWith(';'))) {
+        stmts.push(s)
+      }
     }
     current = []; inStmt = false; depth = 0
   }

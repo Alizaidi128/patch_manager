@@ -65,6 +65,24 @@ function resolveDestSMB(file, app, rootOverride) {
   return p
 }
 
+// For SFTP mode local deploy: deploy_target_path is a Unix absolute remote path.
+// Strip the app_root_path prefix and join with local_src_path so the file lands
+// in the WAR source folder instead of the remote server path.
+function resolveDestLocal(file, app) {
+  let p = (file.deploy_target_path || '').trim().replace(/[*?]/g, '').replace(/\\/g, '/')
+  const remoteRoot = (app.app_root_path || '').replace(/\\/g, '/').replace(/\/+$/, '')
+  if (remoteRoot && p.toLowerCase().startsWith(remoteRoot.toLowerCase() + '/')) {
+    p = p.slice(remoteRoot.length + 1)
+  } else {
+    p = p.replace(/^\/+/, '') // strip leading slash if no root match
+  }
+  if (!p.toLowerCase().endsWith(file.original_filename.toLowerCase())) {
+    p = p ? `${p}/${file.original_filename}` : file.original_filename
+  }
+  const localRoot = app.local_src_path || app.app_root_path
+  return path.join(localRoot, p.replace(/\//g, path.sep))
+}
+
 function resolveDestSFTP(file, app) {
   let p = (file.deploy_target_path || '').trim().replace(/\\/g, '/').replace(/[*?]/g, '')
   const isAbsolute = p.startsWith('/')
@@ -231,8 +249,8 @@ async function restartTomcatSFTP(app) {
     ? app.tomcat_restart_cmd
     : `sudo systemctl restart ${name} 2>&1 || sudo service ${name} restart 2>&1`
 
-  // If a run-as user is configured (e.g. "oracle"), wrap with sudo su - user -c "..."
-  // This is needed when the SSH login user differs from the Tomcat process owner.
+  // Wrap with sudo su - user so the command runs as the Tomcat process owner.
+  // Required when SSH login user (e.g. centegy.admin) differs from Tomcat owner (e.g. oracle).
   const runAs = (app.tomcat_run_as_user || '').trim()
   if (runAs) {
     // Escape single quotes in the command before embedding in -c '...'
@@ -336,7 +354,7 @@ function previewDeploy(patchId, { batchPatchIds = [] } = {}) {
           }
         } else {
           try {
-            const dest = resolveDestSMB(f, app, deployRoot)
+            const dest = app.deployment_mode === 'sftp' ? resolveDestLocal(f, app) : resolveDestSMB(f, app, deployRoot)
             if (!dest || !fs.existsSync(dest) || fs.statSync(dest).mtimeMs < emailMs) {
               deployable.push({ ...f, action: 'deploy', note: 'Re-deploying (destination predates this email)' }); continue
             }
@@ -344,7 +362,7 @@ function previewDeploy(patchId, { batchPatchIds = [] } = {}) {
         }
       } else if (app.deployment_mode === 'sftp' && app.local_src_path && f.local_path && f.file_type !== 'gias_patch') {
         // Legacy fallback (no email_date): re-deploy if missing from local source folder
-        const localDest = resolveDestSMB(f, app, app.local_src_path)
+        const localDest = resolveDestLocal(f, app)
         if (!fs.existsSync(localDest)) {
           deployable.push({ ...f, action: 'deploy', note: 'Re-deploying (missing from local source folder)' }); continue
         }
@@ -422,7 +440,7 @@ function previewDeploy(patchId, { batchPatchIds = [] } = {}) {
     // If the dest file was last written after this email arrived, it's already been deployed
     // (either by this patch on a previous run, or by a later patch that supersedes it).
     if (f.local_path && fs.existsSync(f.local_path) && deployRoot) {
-      const dest = resolveDestSMB(f, app, deployRoot)
+      const dest = app.deployment_mode === 'sftp' ? resolveDestLocal(f, app) : resolveDestSMB(f, app, deployRoot)
       if (fs.existsSync(dest)) {
         try {
           const destMtime = fs.statSync(dest).mtimeMs
@@ -469,7 +487,7 @@ async function executeDeploy({ patchId, fileIds, restartTomcat }) {
           dest = `${localRoot} (${deployed.length} files)`
           logDeployment({ patchId, patchFileId: f.id, appId: patch.app_id, action: 'deploy-gias', status: 'success', detail: dest })
         } else {
-          dest = resolveDestSMB(f, app, localRoot)
+          dest = resolveDestLocal(f, app)
           plainCopy(f.local_path, dest)
           logDeployment({ patchId, patchFileId: f.id, appId: patch.app_id, action: 'deploy', status: 'success', detail: dest })
         }
@@ -627,8 +645,8 @@ function checkDeploymentStatus(patchId) {
       if (f.deploy_target_path && f.local_path &&
           f.file_type !== 'db_script' && f.file_type !== 'reference') {
         // For SFTP mode: check the local_src_path folder (where files land before WAR build),
-        // not the remote server path. deployRoot already resolves to local_src_path for SFTP.
-        const dest = resolveDestSMB(f, app, deployRoot)
+        // not the remote server path. resolveDestLocal strips the Unix root and joins local_src_path.
+        const dest = app.deployment_mode === 'sftp' ? resolveDestLocal(f, app) : resolveDestSMB(f, app, deployRoot)
         if (!dest || !fs.existsSync(dest)) { results.push({ fileId: f.id, status: 'pending' }); continue }
         try {
           const deployed = emailMs > 0 && fs.statSync(dest).mtimeMs >= emailMs

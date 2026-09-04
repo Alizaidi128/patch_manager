@@ -95,7 +95,8 @@ async function restartTomcatSSH(app) {
     throw new Error('No Tomcat path or service name configured')
   }
 
-  // Apply run-as-user wrapper (same as deployEngine.restartTomcatSFTP)
+  // Wrap with sudo su - user so the command runs as the Tomcat process owner.
+  // Required when SSH login user (e.g. centegy.admin) differs from Tomcat owner (e.g. oracle).
   const runAs = (app.tomcat_run_as_user || '').trim()
   if (runAs) {
     const escaped = cmd.replace(/'/g, `'"'"'`)

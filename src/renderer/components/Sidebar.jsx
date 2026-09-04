@@ -88,6 +88,8 @@ export default function Sidebar({ apps, selectedAppId, activeView, theme, onTogg
         </div>
       </div>
 
+      <div className="sidebar-brand">Powered by Ali Zaidi</div>
+
       <nav className="sidebar-footer">
         <div
           className={`sidebar-nav-item${activeView === 'dashboard' ? ' active' : ''}`}

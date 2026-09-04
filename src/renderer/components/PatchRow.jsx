@@ -33,7 +33,7 @@ const MERGE_TYPES = new Set(['xml_merge', 'props_merge'])
 
 const PATH_EDITABLE_TYPES = new Set(['jsp', 'js_file', 'xml_merge', 'props_merge'])
 
-function FileRow({ file, onMerge, onViewScript, onPathSaved, serverOffline }) {
+function FileRow({ file, app, onMerge, onViewScript, onPathSaved, serverOffline }) {
   const [editing, setEditing]   = useState(false)
   const [pathVal, setPathVal]   = useState(file.deploy_target_path || '')
   const [saving,  setSaving]    = useState(false)
@@ -94,18 +94,33 @@ function FileRow({ file, onMerge, onViewScript, onPathSaved, serverOffline }) {
         </span>
       ) : (
         <>
-          {file.deploy_target_path && (
-            <span className="patch-file-path-wrap">
-              <code className="patch-file-path">{file.deploy_target_path}</code>
-              {canEditPath && (
-                <button
-                  className="patch-path-edit-btn"
-                  title="Edit deployment path"
-                  onClick={e => { e.stopPropagation(); setPathVal(file.deploy_target_path); setEditing(true) }}
-                >Edit</button>
-              )}
-            </span>
-          )}
+          {file.deploy_target_path && (() => {
+            // For SFTP apps, deploy_target_path is the remote Unix path (e.g. /u01/opt/APP/genins).
+            // Show only the relative portion so it's clear the file lands locally, not on the server.
+            let displayPath = file.deploy_target_path
+            if (app?.deployment_mode === 'sftp') {
+              const remoteRoot = (app.app_root_path || '').replace(/\\/g, '/').replace(/\/+$/, '')
+              let rel = displayPath.replace(/\\/g, '/')
+              if (remoteRoot && rel.toLowerCase().startsWith(remoteRoot.toLowerCase() + '/')) {
+                rel = rel.slice(remoteRoot.length + 1)
+              } else {
+                rel = rel.replace(/^\/+/, '')
+              }
+              displayPath = rel || displayPath
+            }
+            return (
+              <span className="patch-file-path-wrap">
+                <code className="patch-file-path" title={file.deploy_target_path}>{displayPath}</code>
+                {canEditPath && (
+                  <button
+                    className="patch-path-edit-btn"
+                    title="Edit deployment path"
+                    onClick={e => { e.stopPropagation(); setPathVal(file.deploy_target_path); setEditing(true) }}
+                  >Edit</button>
+                )}
+              </span>
+            )
+          })()}
           {!file.deploy_target_path && canEditPath && (
             <button
               className="patch-file-no-path patch-file-no-path-btn"
@@ -149,7 +164,7 @@ function FileRow({ file, onMerge, onViewScript, onPathSaved, serverOffline }) {
   )
 }
 
-export default function PatchRow({ patch, onOpenFolder, onMerge, onDeploy, onDelete, onMarkDeployed, onViewScript, onPathSaved, selected, onToggleSelect, serverOffline }) {
+export default function PatchRow({ patch, app, onOpenFolder, onMerge, onDeploy, onDelete, onMarkDeployed, onViewScript, onPathSaved, selected, onToggleSelect, serverOffline }) {
   const [expanded, setExpanded] = useState(false)
   const files = patch.files || []
 
@@ -243,6 +258,7 @@ export default function PatchRow({ patch, onOpenFolder, onMerge, onDeploy, onDel
               <FileRow
                 key={f.id}
                 file={f}
+                app={app}
                 onMerge={file => onMerge(file)}
                 onViewScript={file => onViewScript(file)}
                 onPathSaved={onPathSaved}

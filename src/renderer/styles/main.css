@@ -160,6 +160,17 @@ body {
   padding: 8px 16px 4px;
 }
 
+/* Proprietary branding */
+.sidebar-brand {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  opacity: 0.55;
+  text-align: center;
+  letter-spacing: 0.3px;
+}
+
 /* Sidebar footer nav */
 .sidebar-footer {
   flex-shrink: 0;

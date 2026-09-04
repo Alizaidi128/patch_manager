@@ -1,6 +1,6 @@
 {
   "name": "patch-manager",
-  "version": "2.2.4",
+  "version": "2.2.5",
   "description": "Automated patch management for Outlook-received software patches",
   "main": "electron.js",
   "scripts": {

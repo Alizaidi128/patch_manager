@@ -16,11 +16,20 @@ const { logDeployment }                = log
 // isDir=true  → store the directory path (the filename stays as-is in that dir)
 // isDir=false → store a full file path (target filename may differ from attachment name)
 const KNOWN_PATH_RULES = [
+  // web.xml always lives at WEB-INF/web.xml
   {
-    test:    n => /log4j2?/i.test(n),
-    relPath: path.join('WEB-INF', 'classes', 'log4j2.properties'),
+    test:    n => /^web\.xml$/i.test(path.basename(n)),
+    relPath: path.join('WEB-INF', 'web.xml'),
     isDir:   false,
   },
+  // log4j / log4j2 — point to the WEB-INF/classes directory; the correct file
+  // (log4j.properties vs log4j2.properties) is detected from snippet content at merge time
+  {
+    test:    n => /log4j2?/i.test(n),
+    relPath: path.join('WEB-INF', 'classes'),
+    isDir:   true,
+  },
+  // Label bundle files → the whole rb/ directory (all 3 locale variants get the same entries)
   {
     test:    n => /^labels?(?:bundle)?(\.|_|$)/i.test(path.basename(n)),
     relPath: path.join('WEB-INF', 'classes', 'geninslib', 'rb'),
@@ -28,8 +37,15 @@ const KNOWN_PATH_RULES = [
   },
 ]
 
+// For SFTP apps files are deployed locally (local_src_path), not to the remote server path.
+function appLocalBase(app) {
+  return app.deployment_mode === 'sftp'
+    ? (app.local_src_path || app.app_root_path || '')
+    : (app.smb_path || app.app_root_path || '')
+}
+
 function knownDeployPath(filename, app) {
-  const appBase = app.smb_path || app.app_root_path || ''
+  const appBase = appLocalBase(app)
   for (const rule of KNOWN_PATH_RULES) {
     if (rule.test(filename)) {
       return appBase ? path.join(appBase, rule.relPath) : rule.relPath
@@ -43,7 +59,7 @@ function knownDeployPath(filename, app) {
 function buildDeployPath(detected, app) {
   if (!detected) return null
   if (path.isAbsolute(detected) || detected.startsWith('\\\\') || detected.startsWith('//')) return detected
-  const appBase = app.smb_path || app.app_root_path
+  const appBase = appLocalBase(app)
   return appBase ? path.join(appBase, detected) : detected
 }
 
@@ -70,6 +86,9 @@ function stripEmailQuotes(body) {
 
 function extractBodyScript(rawBody) {
   if (!rawBody || !SQL_KW.test(rawBody)) return null
+  // Require at least one statement-terminating semicolon — prevents false positives
+  // where SQL keywords appear as plain English in an email body (e.g. "Update properties of...")
+  if (!/;/.test(rawBody)) return null
 
   // Lines that start SQL statements
   const SQL_START = /^[ \t]*(DROP|CREATE|ALTER|INSERT|UPDATE|DELETE|MERGE|TRUNCATE|SELECT\s+\*|BEGIN|COMMIT|ROLLBACK|GRANT|REVOKE|EXECUTE|DECLARE|CALL)\b/i

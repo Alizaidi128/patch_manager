@@ -588,6 +588,7 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
           <PatchRow
             key={p.id}
             patch={p}
+            app={app}
             selected={selected.has(p.id)}
             onToggleSelect={toggleSelect}
             onOpenFolder={openFolder}

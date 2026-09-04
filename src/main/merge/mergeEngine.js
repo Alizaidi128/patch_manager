@@ -40,6 +40,20 @@ function isLocalPath(p) {
   return /^[A-Za-z]:[\\\/]/.test(p) || p.startsWith('\\\\') || p.startsWith('//')
 }
 
+// For SFTP apps: strip the remote root prefix and join with local_src_path.
+// Mirrors resolveDestLocal in deployEngine — keeps the local WAR folder as the source of truth.
+function resolveLocalSftpPath(app, remotePath) {
+  let p = (remotePath || '').replace(/\\/g, '/')
+  const remoteRoot = (app.app_root_path || '').replace(/\\/g, '/').replace(/\/+$/, '')
+  if (remoteRoot && p.toLowerCase().startsWith(remoteRoot.toLowerCase() + '/')) {
+    p = p.slice(remoteRoot.length + 1)
+  } else {
+    p = p.replace(/^\/+/, '')
+  }
+  const localRoot = app.local_src_path || app.app_root_path
+  return path.join(localRoot, p.replace(/\//g, path.sep))
+}
+
 async function readFromServer(app, filePath) {
   // Local or UNC path — read directly regardless of deployment mode
   if (isLocalPath(filePath) || app.deployment_mode === 'smb' || app.deployment_mode === 'rdp_assisted') {
@@ -48,6 +62,12 @@ async function readFromServer(app, filePath) {
   }
 
   if (app.deployment_mode === 'sftp') {
+    // If the path is a Unix absolute path and we have a local_src_path, read locally.
+    // Files are edited in the local WAR folder first, then uploaded via Deploy WAR.
+    if (!isLocalPath(filePath) && filePath.startsWith('/') && app.local_src_path) {
+      const localPath = resolveLocalSftpPath(app, filePath)
+      if (fs.existsSync(localPath)) return fs.readFileSync(localPath, 'utf8')
+    }
     const SftpClient = require('ssh2-sftp-client')
     const sftp = new SftpClient()
     const tmp  = path.join(os.tmpdir(), `pm_read_${Date.now()}`)
@@ -83,13 +103,23 @@ async function writeToServer(app, filePath, content) {
   }
 
   if (app.deployment_mode === 'sftp') {
+    // If the path is a Unix absolute path and we have a local_src_path, write locally.
+    if (!isLocalPath(filePath) && filePath.startsWith('/') && app.local_src_path) {
+      const localPath = resolveLocalSftpPath(app, filePath)
+      if (fs.existsSync(localPath)) {
+        fs.copyFileSync(localPath, `${localPath}.bak-${ts}`)
+      }
+      fs.mkdirSync(path.dirname(localPath), { recursive: true })
+      fs.writeFileSync(localPath, content, 'utf8')
+      return
+    }
+
     const SftpClient = require('ssh2-sftp-client')
     const sftp = new SftpClient()
     const tmp  = path.join(os.tmpdir(), `pm_write_${ts}`)
     fs.writeFileSync(tmp, content, 'utf8')
     try {
       await sftp.connect(sftpOpts(app))
-      const bak = `${filePath}.bak-${ts}`
       try { await sftp.rename(filePath, `${filePath}.bak-${ts}`) } catch {}
       await sftp.fastPut(tmp, filePath)
       await sftp.end()
@@ -189,8 +219,11 @@ async function previewMerge(patchFileId) {
   if (!file.local_path || !fs.existsSync(file.local_path))
     throw new Error(`Local patch file not found: ${file.local_path}`)
 
-  const resolvedPath = resolveFilePath(file.deploy_target_path, file.original_filename)
   const snippet  = fs.readFileSync(file.local_path, 'utf8')
+  // For props_merge pointing at a directory, detect the right target file from snippet content
+  const resolvedPath = (file.file_type === 'props_merge')
+    ? resolveAllTargets(file.deploy_target_path, file.original_filename, snippet)[0]
+    : resolveFilePath(file.deploy_target_path, file.original_filename)
 
   // Block merge if the patch file is empty — merging nothing risks wiping the server file
   if (!snippet || snippet.trim().length === 0) {
@@ -242,17 +275,32 @@ async function previewMerge(patchFileId) {
   }
 }
 
-// When deploy_target_path is a directory, return all .properties files inside it.
-// Used so a single label patch file merges into every locale bundle in the folder.
-function resolveAllTargets(deployTargetPath, originalFilename) {
+// When deploy_target_path is a directory, return the target file(s) inside it.
+// For log4j snippets: detect format (log4j1 vs log4j2) from snippet content and pick one file.
+// For label bundles: merge into all .properties files in the folder.
+function resolveAllTargets(deployTargetPath, originalFilename, snippetText) {
   const cleanPath = (deployTargetPath || '').trim()
   if (path.extname(cleanPath)) return [cleanPath]  // explicit file path — single target
   try {
     if (!fs.existsSync(cleanPath) || !fs.statSync(cleanPath).isDirectory()) {
       return [resolveFilePath(deployTargetPath, originalFilename)]
     }
-    const entries = fs.readdirSync(cleanPath).filter(e => path.extname(e).toLowerCase() === '.properties')
-    if (entries.length > 0) return entries.map(e => path.join(cleanPath, e))
+    const entries = fs.readdirSync(cleanPath)
+    const propsFiles = entries.filter(e => path.extname(e).toLowerCase() === '.properties')
+
+    // log4j snippets: detect format from content to pick the right file
+    if (/log4j/i.test(originalFilename) && snippetText) {
+      const hasLog4j1 = /^log4j\./m.test(snippetText)
+      const hasLog4j2 = /^(?:appender|rootLogger|logger)\./m.test(snippetText)
+      const target = (hasLog4j1 && !hasLog4j2) ? 'log4j.properties' : 'log4j2.properties'
+      const found = propsFiles.find(e => e.toLowerCase() === target)
+      if (found) return [path.join(cleanPath, found)]
+      // Target file doesn't exist locally yet — return the expected path
+      return [path.join(cleanPath, target)]
+    }
+
+    // Label bundles and other directory targets: merge into all .properties files
+    if (propsFiles.length > 0) return propsFiles.map(e => path.join(cleanPath, e))
   } catch {}
   return [resolveFilePath(deployTargetPath, originalFilename)]
 }
@@ -269,7 +317,7 @@ async function applyMerge(patchFileId, mergedContent) {
 
   // For props_merge targeting a directory: apply to every .properties file in it
   const targets = (file.file_type === 'props_merge')
-    ? resolveAllTargets(file.deploy_target_path, file.original_filename)
+    ? resolveAllTargets(file.deploy_target_path, file.original_filename, snippet)
     : [resolveFilePath(file.deploy_target_path, file.original_filename)]
 
   let written = 0

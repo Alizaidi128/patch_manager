@@ -43,14 +43,45 @@ function previewMerge(existingXml, snippetXml) {
   return { toAdd, alreadyPresent: existing_ }
 }
 
+// Returns [start, end] pairs for every <!-- ... --> block in xml.
+function commentRanges(xml) {
+  const ranges = []
+  const openRx  = /<!--/g
+  const closeRx = /-->/g
+  let m
+  while ((m = openRx.exec(xml)) !== null) {
+    closeRx.lastIndex = m.index + 4
+    const c = closeRx.exec(xml)
+    if (c) ranges.push([m.index, c.index + 3])
+  }
+  return ranges
+}
+
+function inComment(idx, ranges) {
+  return ranges.some(([s, e]) => idx >= s && idx <= e)
+}
+
 function applyMerge(existingXml, snippetXml) {
   const { toAdd } = previewMerge(existingXml, snippetXml)
-  const inserts   = [
+  if (!toAdd.servlets.length && !toAdd.mappings.length) return existingXml
+
+  const inserts = [
     ...toAdd.servlets.map(s => s.raw),
     ...toAdd.mappings.map(s => s.raw)
   ].join('\n')
 
-  // Insert before closing </web-app>
+  const comments  = commentRanges(existingXml)
+
+  // Per the Servlet spec, servlet/servlet-mapping must come before welcome-file-list,
+  // error-page, security-constraint, login-config, etc.
+  // Find the first of those anchors that is NOT inside a comment block.
+  const anchorRx = /(<welcome-file-list[\s>]|<error-page[\s>]|<security-constraint[\s>]|<login-config[\s>]|<\/web-app>)/gi
+  let m
+  while ((m = anchorRx.exec(existingXml)) !== null) {
+    if (!inComment(m.index, comments)) {
+      return existingXml.slice(0, m.index) + inserts + '\n' + existingXml.slice(m.index)
+    }
+  }
   return existingXml.replace(/<\/web-app>\s*$/, `\n${inserts}\n</web-app>`)
 }
 

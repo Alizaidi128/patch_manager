@@ -4,7 +4,8 @@ const os   = require('os')
 const { getDb }                        = require('../db/schema')
 const { updatePatchFile, updatePatch } = require('../db/queries')
 const { logDeployment } = require('../utils/logger')
-const { autoMerge }    = require('../merge/mergeEngine')
+const { autoMerge }           = require('../merge/mergeEngine')
+const { restartTomcatRDP, restartTomcatSSH } = require('./warEngine')
 
 // ---- Helpers ----
 
@@ -594,7 +595,8 @@ async function executeDeploy({ patchId, fileIds, restartTomcat }) {
   let tomcatResult = null
   if (restartTomcat && app.tomcat_service_name) {
     try {
-      if (app.deployment_mode === 'sftp') await restartTomcatSFTP(app)
+      if (app.deployment_mode === 'sftp') await restartTomcatSSH(app)
+      else if (app.deployment_mode === 'rdp_assisted') await restartTomcatRDP(app)
       else restartTomcatSMB(app.tomcat_service_name)
       tomcatResult = { success: true, message: `${app.tomcat_service_name} restarted` }
       logDeployment({ patchId, appId: patch.app_id, action: 'tomcat-restart', status: 'success', detail: app.tomcat_service_name })

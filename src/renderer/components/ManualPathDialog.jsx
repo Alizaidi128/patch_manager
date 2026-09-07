@@ -97,12 +97,17 @@ export default function ManualPathDialog({ items, onClose, onComplete }) {
             )}
           </div>
 
-          {current.emailBody && (
+          {current.fileContent ? (
+            <div className="mp-body-preview">
+              <div className="mp-body-label">File content to merge</div>
+              <pre className="mp-body-text">{current.fileContent}</pre>
+            </div>
+          ) : current.emailBody ? (
             <div className="mp-body-preview">
               <div className="mp-body-label">Email body excerpt</div>
               <pre className="mp-body-text">{current.emailBody}</pre>
             </div>
-          )}
+          ) : null}
 
           <div className="mp-input-section">
             <label className="mp-input-label">

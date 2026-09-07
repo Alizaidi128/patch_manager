@@ -17,8 +17,9 @@ const { logDeployment }                = log
 // isDir=false → store a full file path (target filename may differ from attachment name)
 const KNOWN_PATH_RULES = [
   // web.xml always lives at WEB-INF/web.xml
+  // Also matches web.xml.txt — senders sometimes add .txt to bypass email filters
   {
-    test:    n => /^web\.xml$/i.test(path.basename(n)),
+    test:    n => /^web\.xml(\.\w+)?$/i.test(path.basename(n)),
     relPath: path.join('WEB-INF', 'web.xml'),
     isDir:   false,
   },
@@ -430,7 +431,12 @@ async function fetchForApp(app, sinceDate, toDate) {
 
           if (needsPath(innerType) && (!deployPath || confidence === 'low')) {
             log.warn(`[fetch:${app.name}] Missing/low-confidence path for "${innerName}" — queuing path dialog`)
-            missingPaths.push({ patchFileId, patchId, appId: app.id, appName: app.name, filename: innerName, fileType: innerType, ticketRef, emailSubject: email.subject, emailBody: (email.body || '').slice(0, 800).trim(), detectedPath: deployPath, confidence })
+            const isMerge = innerType === 'xml_merge' || innerType === 'props_merge'
+            let fileContent = null
+            if (isMerge && innerPath && fs.existsSync(innerPath)) {
+              try { fileContent = fs.readFileSync(innerPath, 'utf8').slice(0, 1200).trim() } catch {}
+            }
+            missingPaths.push({ patchFileId, patchId, appId: app.id, appName: app.name, filename: innerName, fileType: innerType, ticketRef, emailSubject: email.subject, emailBody: (email.body || '').slice(0, 800).trim(), fileContent, detectedPath: deployPath, confidence })
           }
         }
         continue
@@ -490,11 +496,17 @@ async function fetchForApp(app, sinceDate, toDate) {
 
       if (needsPath(fileType) && (!deployPath || confidence === 'low')) {
         log.warn(`[fetch:${app.name}] Missing/low-confidence path for "${att.filename}" — queuing path dialog`)
+        const isMerge = fileType === 'xml_merge' || fileType === 'props_merge'
+        let fileContent = null
+        if (isMerge && savePath && fs.existsSync(savePath)) {
+          try { fileContent = fs.readFileSync(savePath, 'utf8').slice(0, 1200).trim() } catch {}
+        }
         missingPaths.push({
           patchFileId, patchId, appId: app.id, appName: app.name,
           filename: att.filename, fileType, ticketRef,
           emailSubject: email.subject,
           emailBody:    (email.body || '').slice(0, 800).trim(),
+          fileContent,
           detectedPath: deployPath, confidence
         })
       }

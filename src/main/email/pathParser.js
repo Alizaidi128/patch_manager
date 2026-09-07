@@ -91,4 +91,21 @@ function extractBodyXml(rawBody) {
   return [...servlets, ...mappings].map(b => b.trim()).join('\n')
 }
 
-module.exports = { extractDeploymentPaths, extractBodyXml }
+// Extract label/properties key=value lines from email body.
+// Lines must contain a key with at least one underscore or dot (e.g. postingbulk_ref_busiclass)
+// to avoid false positives from English sentences.
+// Returns a props-format string, or null if fewer than 2 lines matched.
+function extractBodyProps(rawBody) {
+  if (!rawBody) return null
+  const lines      = rawBody.split(/\r?\n/)
+  const propLines  = []
+  // Key: starts with a letter, contains at least one _ or . separator, alphanumeric/underscore/dot/hyphen only
+  const KEY_RE     = /^[ \t]*([a-zA-Z][a-zA-Z0-9_.-]*[._][a-zA-Z0-9_.-]+)\s*=\s*(.+)$/
+  for (const line of lines) {
+    const m = line.match(KEY_RE)
+    if (m) propLines.push(`${m[1].trim()} = ${m[2].trim()}`)
+  }
+  return propLines.length >= 2 ? propLines.join('\n') : null
+}
+
+module.exports = { extractDeploymentPaths, extractBodyXml, extractBodyProps }

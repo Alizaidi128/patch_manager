@@ -1,9 +1,15 @@
-param(
+﻿param(
   [string]$FolderPath,   # Full path: "StoreName/Folder/Subfolder/..."
   [string]$SinceDate,
   [string]$ToDate = "",
   [int]$MaxEmails = 100
 )
+
+# PS 5.1 stdout defaults to the system OEM code page (often Windows-1252).
+# Node.js reads child-process stdout as UTF-8, so any non-ASCII char in email
+# bodies would be emitted as Windows-1252 bytes and cause JSON.parse to fail.
+# This line forces UTF-8 on both the PS internal pipeline and the console stream.
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 # Check Outlook process first (works regardless of COM bitness)
 $outlookProc = Get-Process outlook -ErrorAction SilentlyContinue
@@ -92,8 +98,11 @@ foreach ($mail in $mailItems) {
       $raw = $mail.HTMLBody -replace '<[^>]+>', ' '
     }
     if ($raw) {
-      # Remove control characters (including null bytes) that break ConvertTo-Json in PS 5.1
+      # Remove C0/C1 control characters and null bytes
       $raw = $raw -replace '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', ''
+      # Strip Unicode line/paragraph separators (U+2028/U+2029) - PS 5.1 ConvertTo-Json chokes on these
+      $raw = $raw -replace [char]0x2028, ' '
+      $raw = $raw -replace [char]0x2029, ' '
       # Collapse excessive whitespace and cap length
       $raw = $raw -replace '\s{3,}', "`n"
       if ($raw.Length -gt 4000) { $raw = $raw.Substring(0, 4000) }
@@ -101,9 +110,17 @@ foreach ($mail in $mailItems) {
     }
   } catch { $bodyText = "" }
 
+  # Sanitize subject — same separators can appear in subjects
+  $safeSubject = ""
+  try {
+    $safeSubject = ($mail.Subject -replace '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '') `
+                                 -replace [char]0x2028, ' ' `
+                                 -replace [char]0x2029, ' '
+  } catch { $safeSubject = "" }
+
   $results += @{
     entryId        = $mail.EntryID
-    subject        = $mail.Subject
+    subject        = $safeSubject
     sender         = $mail.SenderEmailAddress
     senderName     = $mail.SenderName
     receivedTime   = $mail.ReceivedTime.ToString("yyyy-MM-ddTHH:mm:ss")
@@ -116,8 +133,14 @@ foreach ($mail in $mailItems) {
   if ($results.Count -ge $MaxEmails) { break }
 }
 
-try {
-  $results | ConvertTo-Json -Depth 5
-} catch {
-  Write-Error "CONVERT_ERROR: $_"
+# Serialize each item individually so one bad email can't corrupt the whole output.
+# PS 5.1 ConvertTo-Json can fail mid-stream on unusual Unicode; per-item catch isolates it.
+$jsonParts = @()
+foreach ($item in $results) {
+  try {
+    $jsonParts += ($item | ConvertTo-Json -Depth 5 -Compress)
+  } catch {
+    Write-Error "ITEM_SERIALIZE_ERROR: subject=$($item.subject) - $_"
+  }
 }
+Write-Output ("[" + ($jsonParts -join ",") + "]")

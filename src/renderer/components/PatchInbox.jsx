@@ -516,7 +516,14 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
                 ? 'Fetching emails from Outlook… Do not close Outlook.'
                 : fetchState.error
                   ? `Fetch failed: ${fetchState.error}`
-                  : `Fetch complete — ${fetchState.result?.fetched ?? 0} new email${fetchState.result?.fetched !== 1 ? 's' : ''} imported${fetchState.result?.duplicates ? `, ${fetchState.result.duplicates} skipped` : ''}`}
+                  : (() => {
+                      const r = fetchState.result || {}
+                      const parts = [`${r.fetched ?? 0} new`]
+                      if (r.duplicates) parts.push(`${r.duplicates} already imported`)
+                      if ((r.scanned ?? 0) === 0) parts.push('0 found in folder')
+                      else if ((r.scanned ?? 0) > (r.fetched ?? 0) + (r.duplicates ?? 0)) parts.push(`${r.scanned - (r.fetched ?? 0) - (r.duplicates ?? 0)} skipped (no patch files)`)
+                      return `Fetch complete — ${parts.join(', ')}`
+                    })()}
             </span>
             {!fetchState.running && (
               <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', padding: '2px 6px' }} onClick={onClearFetch}>✕</button>

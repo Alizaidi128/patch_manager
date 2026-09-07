@@ -4,7 +4,7 @@ const { getDb }                        = require('../db/schema')
 const { createPatch, createPatchFile } = require('../db/queries')
 const { getEmails, saveAttachment }    = require('./outlookBridge')
 const { classifyAttachment }           = require('./classifier')
-const { extractDeploymentPaths, extractBodyXml } = require('./pathParser')
+const { extractDeploymentPaths, extractBodyXml, extractBodyProps } = require('./pathParser')
 const { createPatchFolder }            = require('../patches/organizer')
 const { extract }                      = require('../patches/extractor')
 const log                              = require('../utils/logger')
@@ -236,6 +236,7 @@ async function fetchForApp(app, sinceDate, toDate) {
   const db = getDb()
   let fetched    = 0
   let duplicates = 0
+  let scanned    = 0
   const missingPaths = []
 
   // If patch_path is a UNC share, authenticate it before creating any folders
@@ -257,6 +258,7 @@ async function fetchForApp(app, sinceDate, toDate) {
   emails.sort((a, b) => (a.receivedTime || '').localeCompare(b.receivedTime || ''))
 
   for (const email of emails) {
+    scanned++
     const subj = email.subject || '(no subject)'
     log.info(`[fetch:${app.name}] Processing: "${subj}" received=${email.receivedTime}`)
 
@@ -545,15 +547,31 @@ async function fetchForApp(app, sinceDate, toDate) {
       log.info(`[fetch:${app.name}] Extracted web.xml entries from email body → ${xmlFilePath}`)
     }
 
+    // Extract label key=value lines from email body → virtual props_merge file
+    const bodyProps = extractBodyProps(stripEmailQuotes(email.body || ''))
+    if (bodyProps) {
+      const propsFilePath = path.join(localFolder, 'body_label_entries.properties')
+      fs.writeFileSync(propsFilePath, bodyProps, 'utf8')
+      const labelsDeployPath = buildDeployPath(path.join('WEB-INF', 'classes', 'geninslib', 'rb'), app)
+      createPatchFile({
+        patch_id: patchId, original_filename: 'body_label_entries.properties',
+        local_path: propsFilePath, file_type: 'props_merge',
+        deploy_status: 'pending', merge_status: 'pending',
+        deploy_target_path: labelsDeployPath
+      })
+      log.info(`[fetch:${app.name}] Extracted label entries from email body → ${propsFilePath}`)
+    }
+
     fetched++
   }
 
-  return { fetched, duplicates, missingPaths }
+  return { fetched, duplicates, scanned, missingPaths }
 }
 
 async function fetchAll(appIds, sinceDate, allApps, toDate) {
   let totalFetched    = 0
   let totalDuplicates = 0
+  let totalScanned    = 0
   let allMissing      = []
   const errors        = []
 
@@ -561,16 +579,17 @@ async function fetchAll(appIds, sinceDate, allApps, toDate) {
     const app = allApps.find(a => a.id === appId)
     if (!app) continue
     try {
-      const { fetched, duplicates, missingPaths } = await fetchForApp(app, sinceDate, toDate)
+      const { fetched, duplicates, scanned, missingPaths } = await fetchForApp(app, sinceDate, toDate)
       totalFetched    += fetched
       totalDuplicates += (duplicates || 0)
+      totalScanned    += (scanned || 0)
       allMissing       = allMissing.concat(missingPaths)
     } catch (e) {
       errors.push({ appId, appName: app.name, error: e.message })
     }
   }
 
-  return { fetched: totalFetched, duplicates: totalDuplicates, missingPaths: allMissing, errors }
+  return { fetched: totalFetched, duplicates: totalDuplicates, scanned: totalScanned, missingPaths: allMissing, errors }
 }
 
 module.exports = { fetchAll, fetchForApp }

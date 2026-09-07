@@ -102,8 +102,14 @@ async function getEmails(folderPath, sinceDate, toDate, maxEmails = 100) {
     const emails = Array.isArray(parsed) ? parsed : [parsed]
     log.info(`[outlook] getEmails returned ${emails.length} email(s)`)
     return emails
-  } catch {
-    log.error('[outlook] getEmails — failed to parse PS JSON output')
+  } catch (e) {
+    const posMatch = e.message.match(/position (\d+)/)
+    const pos = posMatch ? parseInt(posMatch[1], 10) : 0
+    const ctx = pos > 0
+      ? json.slice(Math.max(0, pos - 60), pos + 60)
+      : json.slice(0, 200)
+    log.error(`[outlook] getEmails — failed to parse PS JSON output: ${e.message}`)
+    log.error(`[outlook] Context around position ${pos}: ${JSON.stringify(ctx)}`)
     return []
   }
 }

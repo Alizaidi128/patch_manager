@@ -32,20 +32,16 @@ function buildWar(localSrcPath, warName) {
 }
 
 // Upload WAR to remote server via SFTP:
-//   1. Rename existing CONVUAT.war → CONVUAT bk dd-Mon-yy.war  (date = last deployed patch)
+//   1. Rename existing CONVUAT.war → CONVUAT bk 06-Sep-2026 folder 4.war
 //   2. Upload new .war
-async function deployWarSFTP(app, localWarPath, onProgress, lastPatchDate) {
+// backupLabel = pre-formatted string like "06-Sep-2026 folder 4"
+async function deployWarSFTP(app, localWarPath, onProgress, backupLabel) {
   const SftpClient = require('ssh2-sftp-client')
   const sftp       = new SftpClient()
   const warName    = app.war_name
   const remoteDir  = (app.app_root_path || '').replace(/\/$/, '')
   const remoteWar  = `${remoteDir}/${warName}.war`
-
-  const dateBase = lastPatchDate ? new Date(lastPatchDate) : new Date()
-  const dateTag  = dateBase.toLocaleDateString('en-GB', {
-    day: '2-digit', month: 'short', year: '2-digit'
-  }).replace(/ /g, '-')                           // e.g. "21-Aug-26"
-  const backupWar = `${remoteDir}/${warName} bk ${dateTag}.war`
+  const backupWar  = `${remoteDir}/${warName} bk ${backupLabel}.war`
 
   const emit = (step, pct) => onProgress?.({ step, pct })
   try {
@@ -54,9 +50,9 @@ async function deployWarSFTP(app, localWarPath, onProgress, lastPatchDate) {
 
     try {
       await sftp.rename(remoteWar, backupWar)
-      emit(`Backed up existing WAR → ${warName} bk ${dateTag}.war`)
+      emit(`Backed up remote WAR → ${warName} bk ${backupLabel}.war`)
     } catch {
-      emit('No existing WAR to back up (first deploy)')
+      emit('No existing remote WAR to back up (first deploy)')
     }
 
     emit(`Uploading ${path.basename(localWarPath)}…`, 0)

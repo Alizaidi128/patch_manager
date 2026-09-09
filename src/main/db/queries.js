@@ -1,4 +1,5 @@
 const { getDb } = require('./schema')
+const fs = require('fs')
 
 // ---- Settings ----
 
@@ -58,7 +59,11 @@ function getPatchesForApp(appId, filters = {}) {
   const patches = getDb().prepare(sql).all(...params)
   return patches.map(p => ({
     ...p,
-    files: getDb().prepare('SELECT * FROM patch_files WHERE patch_id = ? ORDER BY id').all(p.id)
+    files: getDb().prepare('SELECT * FROM patch_files WHERE patch_id = ? ORDER BY id').all(p.id).map(f => {
+      let file_size = null
+      if (f.local_path) { try { file_size = fs.statSync(f.local_path).size } catch {} }
+      return { ...f, file_size }
+    })
   }))
 }
 
@@ -135,10 +140,29 @@ function deletePatch(id) {
   db.prepare('DELETE FROM patches WHERE id = ?').run(id)
 }
 
+// ---- Via-App ignored files ----
+
+function getIgnoredFiles(sourceAppId, compareAppId) {
+  return getDb()
+    .prepare('SELECT rel_path FROM via_app_ignored WHERE source_app_id = ? AND compare_app_id = ?')
+    .all(sourceAppId, compareAppId)
+    .map(r => r.rel_path)
+}
+
+function addIgnoredFiles(sourceAppId, compareAppId, relPaths) {
+  const stmt = getDb().prepare(
+    'INSERT OR IGNORE INTO via_app_ignored (source_app_id, compare_app_id, rel_path) VALUES (?, ?, ?)'
+  )
+  getDb().transaction(paths => {
+    for (const rp of paths) stmt.run(sourceAppId, compareAppId, rp)
+  })(relPaths)
+}
+
 module.exports = {
   getAllSettings, saveSetting, saveSettings,
   getAllApps, getApp, saveApp, deleteApp,
   getPatchesForApp, getPatchById, createPatch, updatePatch, getPendingPatchCount,
   getPatchFiles, createPatchFile, updatePatchFile,
-  addLogEntry, getLogEntries, deletePatch
+  addLogEntry, getLogEntries, deletePatch,
+  getIgnoredFiles, addIgnoredFiles
 }

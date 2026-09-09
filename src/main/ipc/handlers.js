@@ -329,32 +329,58 @@ function registerHandlers() {
   // ---- WAR deploy ----
   ipcMain.handle('war:deploy', async (event, { appId }) => {
     const { buildWar, deployWarSFTP } = require('../deploy/warEngine')
-    const app = getAllApps().find(a => a.id === appId)
+    const path = require('path')
+    const fs   = require('fs')
+    const app  = getAllApps().find(a => a.id === appId)
     if (!app) return { success: false, error: 'App not found' }
     if (!app.local_src_path) return { success: false, error: 'local_src_path not configured' }
     if (!app.war_name)       return { success: false, error: 'war_name not configured' }
     if (!app.app_root_path)  return { success: false, error: 'app_root_path not configured' }
 
-    // Find the most recently deployed patch date for this app (used in backup WAR filename)
+    // Build backup label from last deployed patch: "06-Sep-2026 folder 4"
     const db = require('../db/schema').getDb()
     const lastPatch = db.prepare(
-      `SELECT email_date FROM patches WHERE app_id = ? AND status = 'deployed'
+      `SELECT email_date, local_folder FROM patches WHERE app_id = ? AND status = 'deployed'
        ORDER BY deployed_at DESC, email_date DESC LIMIT 1`
     ).get(appId)
-    const lastPatchDate = lastPatch?.email_date || null
+
+    let backupLabel
+    if (lastPatch?.email_date) {
+      const d       = new Date(lastPatch.email_date)
+      const dateTag = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-')
+      const lastSeg = lastPatch.local_folder ? path.basename(lastPatch.local_folder) : ''
+      const folderPart = /^\d+$/.test(lastSeg) ? ` folder ${lastSeg}` : ''
+      backupLabel = `${dateTag}${folderPart}`
+    } else {
+      backupLabel = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-')
+    }
 
     const steps = []
     try {
+      // Backup existing local WAR before building a new one (buildWar overwrites it)
+      const localWarPath = path.join(app.local_src_path, `${app.war_name}.war`)
+      if (fs.existsSync(localWarPath)) {
+        const localBackupName = `${app.war_name} bk ${backupLabel}.war`
+        const localBackupPath = path.join(app.local_src_path, localBackupName)
+        try {
+          fs.renameSync(localWarPath, localBackupPath)
+          steps.push(`Local WAR backed up → ${localBackupName}`)
+        } catch (e) {
+          steps.push(`Warning: could not back up local WAR: ${e.message}`)
+        }
+        event.sender.send('war:progress', { step: steps[steps.length - 1] })
+      }
+
       steps.push('Building WAR from local source…')
       event.sender.send('war:progress', { step: steps[steps.length - 1] })
       const localWar = await buildWar(app.local_src_path, app.war_name)
-      steps.push(`WAR built: ${localWar}`)
+      steps.push(`WAR built: ${path.basename(localWar)}`)
       event.sender.send('war:progress', { step: steps[steps.length - 1] })
 
       await deployWarSFTP(app, localWar, ({ step, pct }) => {
         if (pct == null) steps.push(step)
         event.sender.send('war:progress', { step, pct })
-      }, lastPatchDate)
+      }, backupLabel)
 
       log.info('war:deploy success', { appId, steps })
       return { success: true, steps }
@@ -403,11 +429,39 @@ function registerHandlers() {
     return { success: true }
   })
 
-  // ---- Comprehensive deployment status detection ----
+  // ---- Comprehensive deployment status detection (Via Patches) ----
   handle('patch:detect-all', async (_, { appId }) => {
     const { detectAllStatus } = require('../deploy/detector')
     return detectAllStatus(appId)
   }, ({ appId }) => `appId=${appId}`)
+
+  // ---- Cross-app file comparison (Via App) ----
+  handle('patch:detect-via-app', async (event, { sourceAppId, compareAppId }) => {
+    const { detectViaApp } = require('../deploy/detector')
+    const { getIgnoredFiles } = require('../db/queries')
+    const ignoredRelPaths = new Set(getIgnoredFiles(sourceAppId, compareAppId))
+    log.info(`[detect:via-app] ignored list: ${ignoredRelPaths.size} files`)
+    const onProgress = ({ relPath, compared }) => {
+      try { event.sender.send('detect:via-app:progress', { relPath, compared }) } catch {}
+    }
+    return detectViaApp(sourceAppId, compareAppId, onProgress, ignoredRelPaths)
+  }, ({ sourceAppId, compareAppId }) => `source=${sourceAppId}  compare=${compareAppId}`)
+
+  handle('detect:copy-file', async (_, { srcPath, cmpPath }) => {
+    const fs   = require('fs')
+    const path = require('path')
+    fs.mkdirSync(path.dirname(cmpPath), { recursive: true })
+    fs.copyFileSync(srcPath, cmpPath)
+    log.info(`[detect:copy-file] ${srcPath} → ${cmpPath}`)
+    return { success: true }
+  }, ({ srcPath }) => srcPath)
+
+  handle('detect:ignore-files', async (_, { sourceAppId, compareAppId, relPaths }) => {
+    const { addIgnoredFiles } = require('../db/queries')
+    addIgnoredFiles(sourceAppId, compareAppId, relPaths)
+    log.info(`[detect:ignore-files] source=${sourceAppId} compare=${compareAppId} ignored: ${relPaths.join(', ')}`)
+    return { success: true, count: relPaths.length }
+  }, ({ relPaths }) => `${relPaths.length} files`)
 
   // ---- Dev/test: revert deployed patches back to staged ----
   ipcMain.handle('debug:revert-patches', async (_, { appId }) => {

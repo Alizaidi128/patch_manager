@@ -347,4 +347,143 @@ function detectAllStatus(appId) {
   return { appId, appName: app.name, results }
 }
 
-module.exports = { detectAllStatus }
+// ---- Cross-app comparison ("Via App" detection) ----
+// Walks the source app's deploy root file-by-file, compares mtimes with the
+// same relative paths under the comparison app, and returns mismatched files
+// along with the most recent patch in the source app's history that delivered
+// each mismatched file.
+const SKIP_DIRS = new Set(['logs', 'log', 'tmp', 'temp', 'work', 'cache', '.git', 'node_modules', 'lost+found'])
+
+async function detectViaApp(sourceAppId, compareAppId, onProgress = null, ignoredRelPaths = new Set()) {
+  const db         = getDb()
+  const sourceApp  = db.prepare('SELECT * FROM apps WHERE id = ?').get(sourceAppId)
+  const compareApp = db.prepare('SELECT * FROM apps WHERE id = ?').get(compareAppId)
+
+  if (!sourceApp)  throw new Error('Source app not found')
+  if (!compareApp) throw new Error('Comparison app not found')
+  if (sourceApp.id === compareApp.id) throw new Error('Source and comparison apps must be different')
+
+  const sourceRoot  = localDeployRoot(sourceApp)
+  const compareRoot = localDeployRoot(compareApp)
+
+  if (!sourceRoot)  throw new Error(`Source app "${sourceApp.name}" has no configured deploy path`)
+  if (!compareRoot) throw new Error(`Comparison app "${compareApp.name}" has no configured deploy path`)
+  if (!fs.existsSync(sourceRoot))  throw new Error(`Source app path not accessible: ${sourceRoot}`)
+  if (!fs.existsSync(compareRoot)) throw new Error(`Comparison app path not accessible: ${compareRoot}`)
+
+  log.info(`[detectViaApp] START  source="${sourceApp.name}" (${sourceRoot})  compare="${compareApp.name}" (${compareRoot})`)
+
+  const warnings = []
+  const srcFolder = (sourceApp.outlook_folder_path || '').trim()
+  const cmpFolder = (compareApp.outlook_folder_path || '').trim()
+  if (srcFolder !== cmpFolder) {
+    warnings.push(`Outlook folders differ — source: "${srcFolder || '(none)'}", comparison: "${cmpFolder || '(none)'}"`)
+    log.warn(`[detectViaApp] Outlook folder mismatch: "${srcFolder}" vs "${cmpFolder}"`)
+  }
+
+  const lastPatchStmt = db.prepare(`
+    SELECT p.id AS patch_id, p.email_date, p.email_subject, p.local_folder
+    FROM   patch_files pf
+    JOIN   patches p ON p.id = pf.patch_id
+    WHERE  p.app_id = ? AND pf.original_filename = ? AND p.status = 'deployed'
+    ORDER  BY p.email_date DESC, p.id DESC
+    LIMIT  1
+  `)
+
+  const mismatches  = []
+  let   totalCompared = 0
+  const LIMIT = 8000
+  const YIELD_EVERY    = 50   // yield event loop every N files
+  const PROGRESS_EVERY = 20   // emit progress event every N files
+  const LOG_EVERY      = 500  // write to log every N files
+
+  async function walkAndCompare(dir) {
+    let entries
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+
+    for (const e of entries) {
+      if (totalCompared >= LIMIT) return
+      const srcFull = path.join(dir, e.name)
+      const relPath = path.relative(sourceRoot, srcFull)
+
+      if (e.isDirectory()) {
+        if (SKIP_DIRS.has(e.name.toLowerCase())) continue
+        await walkAndCompare(srcFull)
+        continue
+      }
+
+      const ext = path.extname(e.name).toLowerCase()
+      if (NON_DEPLOY_EXTS.has(ext)) continue
+
+      const relPathNorm = relPath.replace(/\\/g, '/')
+      if (ignoredRelPaths.has(relPathNorm)) continue
+
+      totalCompared++
+
+      // Periodic yields and logging
+      if (totalCompared % YIELD_EVERY === 0) {
+        await new Promise(r => setImmediate(r))
+      }
+      if (totalCompared % LOG_EVERY === 0) {
+        log.info(`[detectViaApp] progress: ${totalCompared} files compared, ${mismatches.length} mismatches so far`)
+      }
+      if (onProgress && totalCompared % PROGRESS_EVERY === 0) {
+        onProgress({ relPath: relPath.replace(/\\/g, '/'), compared: totalCompared })
+      }
+
+      const cmpFull = path.join(compareRoot, relPath)
+      let srcStat, cmpStat
+      try { srcStat = fs.statSync(srcFull) } catch { continue }
+      try { cmpStat = fs.statSync(cmpFull) } catch { cmpStat = null }
+
+      const missing  = !cmpStat
+      const timeDiff = cmpStat ? Math.abs(srcStat.mtimeMs - cmpStat.mtimeMs) : Infinity
+      if (!missing && timeDiff <= 2000) continue    // files match — skip
+
+      log.debug(`[detectViaApp] MISMATCH ${relPath.replace(/\\/g, '/')}  src=${srcStat.mtime.toISOString()}  cmp=${cmpStat ? cmpStat.mtime.toISOString() : 'MISSING'}`)
+
+      const row = lastPatchStmt.get(sourceAppId, e.name)
+      let lastPatch = null
+      if (row) {
+        const folderNum = row.local_folder ? path.basename(row.local_folder) : ''
+        const dateLabel = row.local_folder ? path.basename(path.dirname(row.local_folder)) : ''
+        lastPatch = {
+          patchId:      row.patch_id,
+          emailDate:    row.email_date,
+          emailSubject: row.email_subject,
+          dateLabel,
+          folderNum
+        }
+      }
+
+      mismatches.push({
+        relPath:  relPath.replace(/\\/g, '/'),
+        filename: e.name,
+        srcPath:  srcFull,
+        cmpPath:  cmpFull,
+        srcMtime: srcStat.mtime.toISOString(),
+        cmpMtime: cmpStat ? cmpStat.mtime.toISOString() : null,
+        missing,
+        lastPatch
+      })
+    }
+  }
+
+  await walkAndCompare(sourceRoot)
+
+  log.info(`[detectViaApp] DONE  compared=${totalCompared}  mismatches=${mismatches.length}  hitLimit=${totalCompared >= LIMIT}`)
+  if (mismatches.length > 0) {
+    log.info(`[detectViaApp] Mismatch summary:\n${mismatches.map(m => `  ${m.relPath}  (${m.missing ? 'MISSING in compare' : 'mtime differs'})`).join('\n')}`)
+  }
+
+  return {
+    sourceApp:    { id: sourceApp.id,  name: sourceApp.name,  path: sourceRoot },
+    compareApp:   { id: compareApp.id, name: compareApp.name, path: compareRoot },
+    warnings,
+    mismatches,
+    totalCompared,
+    hitLimit: totalCompared >= LIMIT
+  }
+}
+
+module.exports = { detectAllStatus, detectViaApp }

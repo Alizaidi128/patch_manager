@@ -103,6 +103,15 @@ function initializeDb() {
   try { db.exec(`ALTER TABLE apps ADD COLUMN patch_path TEXT`) } catch {}
   try { db.exec(`ALTER TABLE apps ADD COLUMN tomcat_restart_cmd TEXT`) } catch {}
   try { db.exec(`ALTER TABLE apps ADD COLUMN tomcat_run_as_user TEXT`) } catch {}
+  try { db.exec(`
+    CREATE TABLE IF NOT EXISTS via_app_ignored (
+      source_app_id  INTEGER NOT NULL,
+      compare_app_id INTEGER NOT NULL,
+      rel_path       TEXT    NOT NULL,
+      ignored_at     TEXT    DEFAULT (datetime('now')),
+      PRIMARY KEY (source_app_id, compare_app_id, rel_path)
+    )
+  `) } catch {}
 
   const insertDefault = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)')
   insertDefault.run('patches_root_dir', 'D:\\Office\\Patches_automated')

@@ -3,6 +3,7 @@ import PatchRow from './PatchRow'
 import ConfirmDialog from './ConfirmDialog'
 import ScriptViewModal from './ScriptViewModal'
 import DetectionResults from './DetectionResults'
+import DetectModeDialog from './DetectModeDialog'
 import {
   RocketIcon, TrashIcon, MailIcon, PackageIcon, ServerIcon,
   UndoIcon, RefreshCwIcon, CheckCircleIcon, XCircleIcon, InboxIcon, EyeIcon, ArchiveIcon, SearchIcon
@@ -29,6 +30,11 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
   const [scriptFile, setScriptFile]   = useState(null)
   const [masterScript, setMasterScript] = useState(null)
   const [serverOffline, setServerOffline] = useState(false)
+  const [search, setSearch]           = useState('')
+  const [dateFrom, setDateFrom]       = useState('')
+  const [dateTo, setDateTo]           = useState('')
+  const [detectModeOpen, setDetectModeOpen] = useState(false)
+  const [viaAppTask, setViaAppTask]         = useState(null)
   const loadGenRef = useRef(0)
 
   const load = useCallback(async () => {
@@ -106,8 +112,12 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
   }
 
   function toggleSelectAll() {
-    if (selected.size === patches.length) setSelected(new Set())
-    else setSelected(new Set(patches.map(p => p.id)))
+    const allVisible = filteredPatches.every(p => selected.has(p.id))
+    setSelected(prev => {
+      const next = new Set(prev)
+      filteredPatches.forEach(p => allVisible ? next.delete(p.id) : next.add(p.id))
+      return next
+    })
   }
 
   function askConfirm(message, onConfirm, { confirmLabel = 'Confirm', danger = false } = {}) {
@@ -147,6 +157,16 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
 
   async function handleMarkDeployed(patchId) {
     await window.api.invoke('patch:mark-deployed', { patchId })
+    load()
+  }
+
+  async function handleMarkDeployedSelected() {
+    const toMark = patches.filter(p => selected.has(p.id) && p.status === 'staged')
+    if (!toMark.length) return
+    for (const p of toMark) {
+      await window.api.invoke('patch:mark-deployed', { patchId: p.id })
+    }
+    setSelected(new Set())
     load()
   }
 
@@ -214,6 +234,25 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
     } catch (e) {
       setDetectState({ _appId: app.id, running: false, data: null, error: e.message })
     }
+  }
+
+  function startViaAppComparison(sourceAppId, compareAppId, background) {
+    setViaAppTask({ status: 'running', background, progressFiles: [], result: null, error: null })
+    if (background) setDetectModeOpen(false)
+
+    const unsub = window.api.on('detect:via-app:progress', data => {
+      setViaAppTask(prev => prev ? { ...prev, progressFiles: [...prev.progressFiles, data] } : null)
+    })
+
+    window.api.invoke('patch:detect-via-app', { sourceAppId, compareAppId })
+      .then(result => {
+        unsub()
+        setViaAppTask(prev => prev ? { ...prev, status: 'done', result } : null)
+      })
+      .catch(err => {
+        unsub()
+        setViaAppTask(prev => prev ? { ...prev, status: 'error', error: err.message } : null)
+      })
   }
 
   async function handleArchive() {
@@ -285,8 +324,19 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
     )
   }
 
-  const allSelected  = patches.length > 0 && selected.size === patches.length
-  const someSelected = selected.size > 0 && !allSelected
+  // Client-side filtering by subject search and date range
+  const filteredPatches = patches.filter(p => {
+    if (search) {
+      const subj = (p.email_subject || '').toLowerCase()
+      if (!subj.includes(search.toLowerCase())) return false
+    }
+    if (dateFrom && p.email_date && p.email_date.slice(0, 10) < dateFrom) return false
+    if (dateTo   && p.email_date && p.email_date.slice(0, 10) > dateTo)   return false
+    return true
+  })
+
+  const allSelected  = filteredPatches.length > 0 && filteredPatches.every(p => selected.has(p.id))
+  const someSelected = filteredPatches.some(p => selected.has(p.id)) && !allSelected
   const stagedInSel  = patches.filter(p => selected.has(p.id) && p.status === 'staged').length
 
   return (
@@ -331,6 +381,13 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
           )}
 
           {stagedInSel > 0 && (
+            <button className="btn btn-secondary btn-sm icon-btn" onClick={handleMarkDeployedSelected} title="Mark selected patches as already deployed">
+              <CheckCircleIcon size={13} />
+              Mark Deployed ({stagedInSel})
+            </button>
+          )}
+
+          {stagedInSel > 0 && (
             <button className="btn btn-danger btn-sm icon-btn" onClick={handleDeleteSelected}>
               <TrashIcon size={13} />
               Delete {stagedInSel} Pending
@@ -344,9 +401,9 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
 
           <button
             className="btn btn-detect btn-sm icon-btn"
-            onClick={handleDetect}
+            onClick={() => setDetectModeOpen(true)}
             disabled={curDetectState?.running || serverOffline}
-            title={serverOffline ? 'Server unreachable' : 'Check which patches and merge files are already deployed by comparing with app directory'}
+            title={serverOffline ? 'Server unreachable' : 'Detect deployment status — via patches or cross-app comparison'}
           >
             <SearchIcon size={13} />
             {curDetectState?.running ? 'Detecting…' : 'Detect Status'}
@@ -415,6 +472,39 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
             Revert (Test)
           </button>
         </div>
+      </div>
+
+      <div className="inbox-filter-row">
+        <SearchIcon size={13} className="inbox-filter-icon" />
+        <input
+          className="inbox-search-input"
+          type="text"
+          placeholder="Search by subject…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
+        <label className="inbox-filter-label">From</label>
+        <input
+          className="inbox-date-input"
+          type="date"
+          value={dateFrom}
+          onChange={e => setDateFrom(e.target.value)}
+        />
+        <label className="inbox-filter-label">To</label>
+        <input
+          className="inbox-date-input"
+          type="date"
+          value={dateTo}
+          onChange={e => setDateTo(e.target.value)}
+        />
+        {(search || dateFrom || dateTo) && (
+          <>
+            <button className="btn btn-ghost btn-sm" onClick={() => { setSearch(''); setDateFrom(''); setDateTo('') }}>
+              Clear
+            </button>
+            <span className="inbox-filter-count">{filteredPatches.length} / {patches.length} patches</span>
+          </>
+        )}
       </div>
 
       {batchResult && (
@@ -564,6 +654,34 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
         />
       )}
 
+      {/* Via App background task status bar */}
+      {viaAppTask && !detectModeOpen && (
+        <div className={`via-app-bg-bar${viaAppTask.status === 'done' ? ' via-app-bg-bar--done' : viaAppTask.status === 'error' ? ' via-app-bg-bar--error' : ''}`}>
+          {viaAppTask.status === 'running' && (
+            <>
+              <span className="via-app-bg-spinner" />
+              <span>Comparing apps in background… <strong>{viaAppTask.progressFiles.length}</strong> files scanned</span>
+              <button className="btn btn-ghost btn-sm" onClick={() => setDetectModeOpen(true)}>Show Details</button>
+            </>
+          )}
+          {viaAppTask.status === 'done' && (
+            <>
+              <CheckCircleIcon size={13} />
+              <span>Comparison complete — <strong>{viaAppTask.result?.mismatches?.length ?? 0}</strong> mismatch{(viaAppTask.result?.mismatches?.length ?? 0) !== 1 ? 'es' : ''} found</span>
+              <button className="btn btn-ghost btn-sm" onClick={() => setDetectModeOpen(true)}>View Results</button>
+              <button className="btn btn-ghost btn-sm" style={{ marginLeft: 4 }} onClick={() => setViaAppTask(null)}>✕</button>
+            </>
+          )}
+          {viaAppTask.status === 'error' && (
+            <>
+              <XCircleIcon size={13} />
+              <span>Comparison failed: {viaAppTask.error}</span>
+              <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }} onClick={() => setViaAppTask(null)}>✕</button>
+            </>
+          )}
+        </div>
+      )}
+
       <div className="inbox-list" style={curDetectState?.data && !curDetectState.running ? { display: 'none' } : undefined}>
         {loading && patches.length === 0 && (
           <div className="inbox-loading">Loading patches…</div>
@@ -577,7 +695,13 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
           </div>
         )}
 
-        {patches.length > 0 && (
+        {!loading && patches.length > 0 && filteredPatches.length === 0 && (
+          <div className="inbox-empty">
+            <div style={{ opacity: 0.4, marginBottom: 8 }}>No patches match the current filter.</div>
+          </div>
+        )}
+
+        {filteredPatches.length > 0 && (
           <div className="patch-list-header">
             <span className="patch-list-header-subject">Subject</span>
             <div className="patch-list-header-meta">
@@ -591,7 +715,7 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
           </div>
         )}
 
-        {patches.map(p => (
+        {filteredPatches.map(p => (
           <PatchRow
             key={p.id}
             patch={p}
@@ -631,6 +755,17 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
         <ScriptViewModal
           patchFiles={masterScript}
           onClose={() => setMasterScript(null)}
+        />
+      )}
+
+      {detectModeOpen && (
+        <DetectModeDialog
+          app={app}
+          onClose={() => setDetectModeOpen(false)}
+          onViaPatchesDetect={() => { setDetectModeOpen(false); handleDetect() }}
+          task={viaAppTask}
+          onStartTask={startViaAppComparison}
+          onClearTask={() => setViaAppTask(null)}
         />
       )}
 

@@ -1,6 +1,13 @@
 import { useState, useRef, useEffect } from 'react'
 import { RocketIcon, FolderIcon } from '../icons.jsx'
 
+function fmtSize(bytes) {
+  if (bytes == null || bytes < 0) return ''
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
 const FILE_TYPE_LABEL = {
   gias_patch:  'GIAS',
   jsp:         'JSP',
@@ -78,6 +85,9 @@ function FileRow({ file, app, onMerge, onViewScript, onPathSaved, serverOffline 
         {FILE_TYPE_LABEL[file.file_type] || file.file_type}
       </span>
       <span className="patch-file-name">{file.original_filename}</span>
+      {file.file_size != null && (
+        <span className="patch-file-size">{fmtSize(file.file_size)}</span>
+      )}
 
       {editing ? (
         <span className="patch-file-path-edit" onClick={e => e.stopPropagation()}>

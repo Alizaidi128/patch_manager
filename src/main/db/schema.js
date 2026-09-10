@@ -117,6 +117,8 @@ function initializeDb() {
   try { db.exec(`ALTER TABLE apps ADD COLUMN db_service_name TEXT`) } catch {}
   try { db.exec(`ALTER TABLE apps ADD COLUMN db_user TEXT`) } catch {}
   try { db.exec(`ALTER TABLE apps ADD COLUMN db_password_enc TEXT`) } catch {}
+  try { db.exec(`ALTER TABLE apps ADD COLUMN auto_fetch_interval INTEGER DEFAULT 0`) } catch {}
+  try { db.exec(`ALTER TABLE apps ADD COLUMN last_fetched_at TEXT`) } catch {}
   try { db.exec(`
     CREATE TABLE IF NOT EXISTS via_folder_ignored (
       source_folder  TEXT NOT NULL,

@@ -63,6 +63,7 @@ function makeDefault() {
     local_src_path: '', war_name: '', remote_war_path: '', tomcat_remote_path: '',
     sftp_server_path: '', patch_path: '', tomcat_restart_cmd: '', tomcat_run_as_user: '',
     db_host: '', db_port: 1521, db_service_name: '', db_user: '', db_password: '',
+    auto_fetch_interval: 0,
     notes: ''
   }
 }
@@ -202,6 +203,24 @@ export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
           <p className="form-hint">
             Include the account name as the first segment (browse to find it). Outlook must be open to browse.
           </p>
+        </div>
+
+        <div className="form-group" style={{ marginBottom: 0 }}>
+          <label>Auto Fetch Interval</label>
+          <select
+            className="form-control"
+            style={{ width: 180 }}
+            value={form.auto_fetch_interval || 0}
+            onChange={e => set('auto_fetch_interval', parseInt(e.target.value, 10))}
+          >
+            <option value={0}>Off</option>
+            <option value={5}>Every 5 minutes</option>
+            <option value={10}>Every 10 minutes</option>
+            <option value={15}>Every 15 minutes</option>
+            <option value={30}>Every 30 minutes</option>
+            <option value={60}>Every 60 minutes</option>
+          </select>
+          <p className="form-hint">Automatically fetch new emails on a schedule. The timer resets after each manual fetch.</p>
         </div>
       </div>
 

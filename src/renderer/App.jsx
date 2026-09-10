@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import UpdateBanner from './components/UpdateBanner'
 import Sidebar from './components/Sidebar'
 import Settings from './components/Settings'
@@ -44,6 +44,13 @@ export default function App() {
   // Background fetch state — shown as an inline panel in PatchInbox
   const [fetchState, setFetchState] = useState(null) // null | { running, result, error }
 
+  // Auto-fetch: keep a live ref to apps so the interval closure always sees fresh data
+  const appsRef        = useRef([])
+  const autoFetchBusy  = useRef(false)
+  const fetchStateRef  = useRef(null)
+  useEffect(() => { appsRef.current = apps }, [apps])
+  useEffect(() => { fetchStateRef.current = fetchState }, [fetchState])
+
   // Inbox refresh counter
   const [inboxKey, setInboxKey] = useState(0)
   const refreshInbox = () => setInboxKey(k => k + 1)
@@ -81,6 +88,14 @@ export default function App() {
 
   function handleConfigCancel() { setEditAppId(null); setView('dashboard') }
 
+  async function saveFetchTimestamps(appIds) {
+    const isoNow = new Date().toISOString()
+    await Promise.all(appIds.map(id =>
+      window.api.invoke('app:update-last-fetched', { appId: id, isoDate: isoNow }).catch(() => {})
+    ))
+    loadApps()
+  }
+
   async function startFetch(config) {
     setShowFetch(false)
     setFetchState({ running: true, result: null, error: null, appIds: config.appIds })
@@ -94,7 +109,59 @@ export default function App() {
     } catch (e) {
       setFetchState({ running: false, result: null, error: e.message, appIds: config.appIds })
     }
+    await saveFetchTimestamps(config.appIds)
   }
+
+  async function runAutoFetch(dueApps) {
+    if (autoFetchBusy.current || fetchStateRef.current?.running) return
+    autoFetchBusy.current = true
+
+    const appIds = dueApps.map(a => a.id)
+
+    // Get the earliest latest-patch-date across due apps as sinceDate
+    const dateResults = await Promise.all(
+      appIds.map(id => window.api.invoke('app:latest-patch-date', { appId: id }).catch(() => ({ date: null })))
+    )
+    const dates    = dateResults.map(r => r.date).filter(Boolean)
+    const sinceDate = dates.length > 0
+      ? dates.reduce((min, d) => d < min ? d : min).slice(0, 10)
+      : (() => { const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10) })()
+    const toDate   = new Date().toISOString().slice(0, 10)
+
+    setFetchState({ running: true, result: null, error: null, appIds, isAutoFetch: true })
+    try {
+      const res = await window.api.invoke('outlook:fetch', { appIds, sinceDate, toDate })
+      setFetchState({ running: false, result: res, error: null, appIds, isAutoFetch: true })
+      refreshInbox()
+      if (res?.missingPaths?.length) setMissingPaths(res.missingPaths)
+    } catch (e) {
+      setFetchState({ running: false, result: null, error: e.message, appIds, isAutoFetch: true })
+    }
+    await saveFetchTimestamps(appIds)
+    autoFetchBusy.current = false
+  }
+
+  // Global 60-second tick — checks which apps are due for auto-fetch
+  useEffect(() => {
+    const id = setInterval(() => {
+      const now     = Date.now()
+      const dueApps = appsRef.current.filter(a => {
+        if (!a.auto_fetch_interval || !a.outlook_folder_path || a.is_active === 0) return false
+        const intervalMs = a.auto_fetch_interval * 60_000
+        const lastMs     = a.last_fetched_at ? new Date(a.last_fetched_at).getTime() : 0
+        return now - lastMs >= intervalMs
+      })
+      if (!dueApps.length) return
+      // Expand: any app sharing an Outlook folder with a due app gets included in the same batch
+      // so the same folder is never opened twice and both apps get their timestamps updated together
+      const dueFolders = new Set(dueApps.map(a => a.outlook_folder_path))
+      const batchApps  = appsRef.current.filter(
+        a => a.outlook_folder_path && dueFolders.has(a.outlook_folder_path) && a.is_active !== 0
+      )
+      runAutoFetch(batchApps)
+    }, 60_000)
+    return () => clearInterval(id)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedApp = apps.find(a => a.id === selectedAppId)
   const editApp     = editAppId != null ? apps.find(a => a.id === editAppId) : null
@@ -174,6 +241,8 @@ export default function App() {
                 refreshKey={inboxKey}
                 fetchState={fetchState}
                 onClearFetch={() => setFetchState(null)}
+                lastFetchedAt={selectedApp?.last_fetched_at || null}
+                autoFetchInterval={selectedApp?.auto_fetch_interval || 0}
               />
             </div>
           </>

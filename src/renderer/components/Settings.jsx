@@ -90,7 +90,7 @@ export default function Settings() {
         </div>
 
         <div className="alert alert-info" style={{ marginTop: 0 }}>
-          Outlook polling is manual-only — no background timers. All fetching and deployment is triggered by you.
+          Per-app auto-fetch intervals (5 – 60 min) are configured in each app's settings under <strong>Edit App → Auto Fetch Interval</strong>.
         </div>
       </div>
 

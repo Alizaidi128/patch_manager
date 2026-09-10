@@ -16,7 +16,15 @@ const STATUS_TABS = [
   { key: 'skipped',  label: 'Skipped' },
 ]
 
-export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey, fetchState, onClearFetch }) {
+function fmtFetchTime(iso) {
+  if (!iso) return null
+  return new Date(iso).toLocaleString('en-US', {
+    day: '2-digit', month: 'short', year: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: true
+  }).replace(',', '')
+}
+
+export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey, fetchState, onClearFetch, lastFetchedAt, autoFetchInterval }) {
   const [patches, setPatches]       = useState([])
   const [tab, setTab]               = useState('all')
   const [loading, setLoading]       = useState(false)
@@ -36,7 +44,21 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
   const [dateTo, setDateTo]           = useState('')
   const [detectModeOpen, setDetectModeOpen] = useState(false)
   const [viaAppTask, setViaAppTask]         = useState(null)
+  const [nextFetchIn, setNextFetchIn]       = useState(null) // seconds until next auto-fetch
   const loadGenRef = useRef(0)
+
+  // Live countdown for auto-fetch
+  useEffect(() => {
+    if (!autoFetchInterval || !lastFetchedAt) { setNextFetchIn(null); return }
+    function calc() {
+      const elapsed = (Date.now() - new Date(lastFetchedAt).getTime()) / 1000
+      const remaining = Math.max(0, autoFetchInterval * 60 - elapsed)
+      setNextFetchIn(Math.ceil(remaining))
+    }
+    calc()
+    const id = setInterval(calc, 10_000)
+    return () => clearInterval(id)
+  }, [autoFetchInterval, lastFetchedAt])
 
   const load = useCallback(async () => {
     if (!app) return
@@ -493,15 +515,32 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
             Archive {selected.size > 0 ? `(${selected.size})` : 'All'}
           </button>
 
-          <button
-            className="btn btn-primary btn-sm icon-btn"
-            onClick={onFetch}
-            disabled={serverOffline}
-            title={serverOffline ? 'Server unreachable' : undefined}
-          >
-            <MailIcon size={13} />
-            Fetch Emails
-          </button>
+          <div className="fetch-btn-group">
+            {(lastFetchedAt || autoFetchInterval > 0) && (
+              <span className="last-fetched-hint">
+                {lastFetchedAt
+                  ? <span className="last-fetched-time">{fmtFetchTime(lastFetchedAt)}</span>
+                  : <span className="last-fetched-time">Never fetched</span>
+                }
+                {autoFetchInterval > 0 && (
+                  <span className="auto-fetch-countdown">
+                    {nextFetchIn === null ? `every ${autoFetchInterval}m`
+                      : nextFetchIn <= 0 ? 'fetching…'
+                      : `auto in ${nextFetchIn < 60 ? `${nextFetchIn}s` : `${Math.ceil(nextFetchIn / 60)}m`}`}
+                  </span>
+                )}
+              </span>
+            )}
+            <button
+              className="btn btn-primary btn-sm icon-btn"
+              onClick={onFetch}
+              disabled={serverOffline}
+              title={serverOffline ? 'Server unreachable' : undefined}
+            >
+              <MailIcon size={13} />
+              Fetch Emails
+            </button>
+          </div>
 
           {selectedScriptCount > 0 && (
             <button
@@ -697,7 +736,7 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
             </span>
             <span className="war-panel-title">
               {fetchState.running
-                ? 'Fetching emails from Outlook… Do not close Outlook.'
+                ? `${fetchState.isAutoFetch ? 'Auto-fetching' : 'Fetching'} emails from Outlook… Do not close Outlook.`
                 : fetchState.error
                   ? `Fetch failed: ${fetchState.error}`
                   : (() => {

@@ -145,6 +145,17 @@ function registerHandlers() {
     return { success: true, filePath: savePath.filePath }
   })
 
+  handle('app:latest-patch-date', async (_, { appId }) => {
+    const { getLatestPatchDate } = require('../db/queries')
+    return { date: getLatestPatchDate(appId) }
+  }, ({ appId }) => `appId=${appId}`)
+
+  handle('app:update-last-fetched', async (_, { appId, isoDate }) => {
+    const { updateAppLastFetched } = require('../db/queries')
+    updateAppLastFetched(appId, isoDate)
+    return { success: true }
+  }, ({ appId }) => `appId=${appId}`)
+
   // ---- Phase 3: Email fetch ----
   handle('outlook:fetch', async (_, { appIds, sinceDate, toDate }) => {
     const { fetchAll } = require('../email/fetchOrchestrator')

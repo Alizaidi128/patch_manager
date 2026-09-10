@@ -173,6 +173,17 @@ function removeIgnoredFiles(sourceAppId, compareAppId, relPaths) {
   })(relPaths)
 }
 
+// ---- Auto-fetch helpers ----
+
+function getLatestPatchDate(appId) {
+  const row = getDb().prepare('SELECT MAX(email_date) AS latest FROM patches WHERE app_id = ?').get(appId)
+  return row?.latest || null
+}
+
+function updateAppLastFetched(appId, isoDate) {
+  getDb().prepare('UPDATE apps SET last_fetched_at = ? WHERE id = ?').run(isoDate, appId)
+}
+
 // ---- Via-Folder ignored files (manual folder comparison) ----
 
 function getIgnoredFolderFiles(sourceFolder, compareFolder) {
@@ -213,5 +224,6 @@ module.exports = {
   getPatchFiles, createPatchFile, updatePatchFile,
   addLogEntry, getLogEntries, deletePatch,
   getIgnoredFiles, getIgnoredFilesFull, addIgnoredFiles, removeIgnoredFiles,
-  getIgnoredFolderFiles, getIgnoredFolderFilesFull, addIgnoredFolderFiles, removeIgnoredFolderFiles
+  getIgnoredFolderFiles, getIgnoredFolderFilesFull, addIgnoredFolderFiles, removeIgnoredFolderFiles,
+  getLatestPatchDate, updateAppLastFetched
 }

@@ -21,12 +21,14 @@ function ValidationLine({ ok, warn, text }) {
 
 export default function DetectModeDialog({
   app, onClose, onViaPatchesDetect,
-  task, onStartTask, onClearTask
+  task, onStartTask, onStartManualTask, onClearTask
 }) {
-  const [mode, setMode]             = useState('patches')
-  const [allApps, setAllApps]       = useState([])
-  const [sourceId, setSourceId]     = useState(app?.id ?? '')
-  const [compareId, setCompareId]   = useState('')
+  const [mode, setMode]               = useState('patches')
+  const [allApps, setAllApps]         = useState([])
+  const [sourceId, setSourceId]       = useState(app?.id ?? '')
+  const [compareId, setCompareId]     = useState('')
+  const [sourceFolder, setSourceFolder]   = useState('')
+  const [compareFolder, setCompareFolder] = useState('')
   const [checking, setChecking]     = useState(false)
   const [validation, setValidation] = useState(null)
   const [selected, setSelected]           = useState(new Set())
@@ -114,7 +116,13 @@ export default function DetectModeDialog({
 
   function handleRun() {
     if (mode === 'patches') { onViaPatchesDetect(); onClose(); return }
+    if (mode === 'manual')  { onStartManualTask(sourceFolder, compareFolder, false); return }
     onStartTask(Number(sourceId), Number(compareId), false)
+  }
+
+  async function browseFolder(setter) {
+    const dir = await window.api.invoke('dialog:browse-folder')
+    if (dir) setter(dir)
   }
 
   // ---- Row actions ----
@@ -143,9 +151,15 @@ export default function DetectModeDialog({
   }
 
   async function doIgnore(relPaths) {
-    const { sourceAppId, compareAppId } = getAppIds()
     try {
-      await window.api.invoke('detect:ignore-files', { sourceAppId, compareAppId, relPaths })
+      if (isManualResult) {
+        const sourceFolder  = getResult().sourceApp.path
+        const compareFolder = getResult().compareApp.path
+        await window.api.invoke('detect:folder-ignore-files', { sourceFolder, compareFolder, relPaths })
+      } else {
+        const { sourceAppId, compareAppId } = getAppIds()
+        await window.api.invoke('detect:ignore-files', { sourceAppId, compareAppId, relPaths })
+      }
       setRowStates(prev => {
         const next = { ...prev }
         relPaths.forEach(rp => { next[rp] = 'ignored' })
@@ -190,9 +204,12 @@ export default function DetectModeDialog({
   }
 
   // ---- Derived state ----
-  const appOptions = allApps.filter(a => a.is_active !== 0)
-  const canRunApp  = mode === 'app' && sourceId && compareId &&
+  const isManualResult = task?.result?.isManual ?? false
+
+  const appOptions    = allApps.filter(a => a.is_active !== 0)
+  const canRunApp     = mode === 'app' && sourceId && compareId &&
     sourceId !== compareId && validation?.canRun && !checking && !task
+  const canRunManual  = mode === 'manual' && !!sourceFolder && !!compareFolder && !task
   const isRunning  = task?.status === 'running'
   const isDone     = task?.status === 'done'
   const isError    = task?.status === 'error'
@@ -233,6 +250,13 @@ export default function DetectModeDialog({
                   <div className="dm-mode-desc">Walk the source app's deployed files and find any that differ from a comparison app — then trace each mismatch back to the patch that last changed it.</div>
                 </div>
               </label>
+              <label className={`dm-mode-card ${mode === 'manual' ? 'dm-mode-card--active' : ''}`}>
+                <input type="radio" name="detect-mode" value="manual" checked={mode === 'manual'} onChange={() => setMode('manual')} />
+                <div>
+                  <div className="dm-mode-title">Manual Folders</div>
+                  <div className="dm-mode-desc">Manually select any two local folders as source and comparison — runs the same file comparison without needing registered app entries.</div>
+                </div>
+              </label>
             </div>
 
             {mode === 'app' && (
@@ -257,6 +281,25 @@ export default function DetectModeDialog({
                     {checking && <div className="dm-checking">Checking RDP connectivity…</div>}
                   </div>
                 )}
+              </div>
+            )}
+
+            {mode === 'manual' && (
+              <div className="dm-app-config">
+                <div className="dm-app-row">
+                  <label className="dm-app-label">Source Folder <span className="dm-hint">(reference — already up to date)</span></label>
+                  <div className="dm-folder-browse">
+                    <input className="dm-folder-input" readOnly value={sourceFolder} placeholder="Click Browse to select folder…" />
+                    <button className="btn btn-secondary btn-sm" onClick={() => browseFolder(setSourceFolder)}>Browse…</button>
+                  </div>
+                </div>
+                <div className="dm-app-row">
+                  <label className="dm-app-label">Comparison Folder <span className="dm-hint">(to check for missing updates)</span></label>
+                  <div className="dm-folder-browse">
+                    <input className="dm-folder-input" readOnly value={compareFolder} placeholder="Click Browse to select folder…" />
+                    <button className="btn btn-secondary btn-sm" onClick={() => browseFolder(setCompareFolder)}>Browse…</button>
+                  </div>
+                </div>
               </div>
             )}
           </>
@@ -389,7 +432,7 @@ export default function DetectModeDialog({
                                 </button>
                                 {dropdownOpen === m.relPath && (
                                   <div className="dm-row-dd-menu">
-                                    <button onClick={() => handleCopy([m])}>Copy to comparison app</button>
+                                    <button onClick={() => handleCopy([m])}>Copy to comparison folder</button>
                                     <button onClick={() => requestIgnore([m.relPath])}>Ignore always</button>
                                   </div>
                                 )}
@@ -429,8 +472,12 @@ export default function DetectModeDialog({
             <button
               className="btn btn-primary btn-sm"
               onClick={handleRun}
-              disabled={mode === 'app' && !canRunApp}
-              title={mode === 'app' && !canRunApp && !checking ? 'Select two reachable apps first' : undefined}
+              disabled={(mode === 'app' && !canRunApp) || (mode === 'manual' && !canRunManual)}
+              title={
+                (mode === 'app' && !canRunApp && !checking) ? 'Select two reachable apps first'
+                : (mode === 'manual' && !canRunManual) ? 'Select source and comparison folders first'
+                : undefined
+              }
             >
               {mode === 'patches' ? 'Run Detection' : 'Run Comparison'}
             </button>
@@ -455,8 +502,10 @@ export default function DetectModeDialog({
         {/* Ignored files child modal */}
         {showIgnored && isDone && (
           <IgnoredFilesModal
-            sourceAppId={task.result.sourceApp.id}
-            compareAppId={task.result.compareApp.id}
+            {...(isManualResult
+              ? { sourceFolder: task.result.sourceApp.path, compareFolder: task.result.compareApp.path }
+              : { sourceAppId: task.result.sourceApp.id,   compareAppId:  task.result.compareApp.id  }
+            )}
             sourceAppName={task.result.sourceApp.name}
             compareAppName={task.result.compareApp.name}
             onClose={() => setShowIgnored(false)}

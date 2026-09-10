@@ -173,11 +173,45 @@ function removeIgnoredFiles(sourceAppId, compareAppId, relPaths) {
   })(relPaths)
 }
 
+// ---- Via-Folder ignored files (manual folder comparison) ----
+
+function getIgnoredFolderFiles(sourceFolder, compareFolder) {
+  return getDb()
+    .prepare('SELECT rel_path FROM via_folder_ignored WHERE source_folder = ? AND compare_folder = ?')
+    .all(sourceFolder, compareFolder)
+    .map(r => r.rel_path)
+}
+
+function getIgnoredFolderFilesFull(sourceFolder, compareFolder) {
+  return getDb()
+    .prepare('SELECT rel_path, ignored_at FROM via_folder_ignored WHERE source_folder = ? AND compare_folder = ? ORDER BY ignored_at DESC')
+    .all(sourceFolder, compareFolder)
+}
+
+function addIgnoredFolderFiles(sourceFolder, compareFolder, relPaths) {
+  const stmt = getDb().prepare(
+    'INSERT OR IGNORE INTO via_folder_ignored (source_folder, compare_folder, rel_path) VALUES (?, ?, ?)'
+  )
+  getDb().transaction(paths => {
+    for (const rp of paths) stmt.run(sourceFolder, compareFolder, rp)
+  })(relPaths)
+}
+
+function removeIgnoredFolderFiles(sourceFolder, compareFolder, relPaths) {
+  const stmt = getDb().prepare(
+    'DELETE FROM via_folder_ignored WHERE source_folder = ? AND compare_folder = ? AND rel_path = ?'
+  )
+  getDb().transaction(paths => {
+    for (const rp of paths) stmt.run(sourceFolder, compareFolder, rp)
+  })(relPaths)
+}
+
 module.exports = {
   getAllSettings, saveSetting, saveSettings,
   getAllApps, getApp, saveApp, deleteApp,
   getPatchesForApp, getPatchById, createPatch, updatePatch, getPendingPatchCount,
   getPatchFiles, createPatchFile, updatePatchFile,
   addLogEntry, getLogEntries, deletePatch,
-  getIgnoredFiles, getIgnoredFilesFull, addIgnoredFiles, removeIgnoredFiles
+  getIgnoredFiles, getIgnoredFilesFull, addIgnoredFiles, removeIgnoredFiles,
+  getIgnoredFolderFiles, getIgnoredFolderFilesFull, addIgnoredFolderFiles, removeIgnoredFolderFiles
 }

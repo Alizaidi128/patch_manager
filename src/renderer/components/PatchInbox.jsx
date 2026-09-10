@@ -287,6 +287,25 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
       })
   }
 
+  function startManualFolderComparison(sourceFolder, compareFolder, background) {
+    setViaAppTask({ status: 'running', background, progressFiles: [], result: null, error: null })
+    if (background) setDetectModeOpen(false)
+
+    const unsub = window.api.on('detect:via-app:progress', data => {
+      setViaAppTask(prev => prev ? { ...prev, progressFiles: [...prev.progressFiles, data] } : null)
+    })
+
+    window.api.invoke('patch:detect-via-folders', { sourceFolder, compareFolder })
+      .then(result => {
+        unsub()
+        setViaAppTask(prev => prev ? { ...prev, status: 'done', result } : null)
+      })
+      .catch(err => {
+        unsub()
+        setViaAppTask(prev => prev ? { ...prev, status: 'error', error: err.message } : null)
+      })
+  }
+
   async function handleArchive() {
     const patchIds = selected.size > 0
       ? [...selected]
@@ -840,6 +859,7 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
           onViaPatchesDetect={() => { setDetectModeOpen(false); handleDetect() }}
           task={viaAppTask}
           onStartTask={startViaAppComparison}
+          onStartManualTask={startManualFolderComparison}
           onClearTask={() => setViaAppTask(null)}
         />
       )}

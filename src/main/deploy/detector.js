@@ -10,7 +10,10 @@ const { getPatchRootDir } = require('../patches/organizer')
 const STRUCTURAL_DIRS = /^(WEB-INF|META-INF|genins|classes|lib|webapps|src|resources|static|templates)$/i
 
 // Extensions that are never deployed to an app server — skip when walking extracted dirs
-const NON_DEPLOY_EXTS = new Set(['.rar', '.zip', '.7z', '.tar', '.gz', '.sql', '.txt', '.log', '.bak', '.md'])
+const NON_DEPLOY_EXTS = new Set(['.rar', '.zip', '.7z', '.tar', '.gz', '.war', '.sql', '.txt', '.log', '.bak', '.md'])
+
+// Only descend into these directories at the app root level — anything else (backup folders, etc.) is skipped
+const APP_ROOT_DIRS = new Set(['di', 'genins', 'glas', 'gnled', 'healthins', 'para', 'param', 'secman', 'shmalib', 'shsm', 'web-inf', 'wf'])
 
 function walkDir(dir, deployRoot, acc = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -397,7 +400,7 @@ async function detectViaApp(sourceAppId, compareAppId, onProgress = null, ignore
   const PROGRESS_EVERY = 20   // emit progress event every N files
   const LOG_EVERY      = 500  // write to log every N files
 
-  async function walkAndCompare(dir) {
+  async function walkAndCompare(dir, depth = 0) {
     let entries
     try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
 
@@ -408,7 +411,9 @@ async function detectViaApp(sourceAppId, compareAppId, onProgress = null, ignore
 
       if (e.isDirectory()) {
         if (SKIP_DIRS.has(e.name.toLowerCase())) continue
-        await walkAndCompare(srcFull)
+        // At the app root, only descend into known app subdirectories
+        if (depth === 0 && !APP_ROOT_DIRS.has(e.name.toLowerCase())) continue
+        await walkAndCompare(srcFull, depth + 1)
         continue
       }
 
@@ -486,4 +491,82 @@ async function detectViaApp(sourceAppId, compareAppId, onProgress = null, ignore
   }
 }
 
-module.exports = { detectAllStatus, detectViaApp }
+async function detectViaFolders(sourceFolder, compareFolder, onProgress = null, ignoredRelPaths = new Set()) {
+  if (!fs.existsSync(sourceFolder))  throw new Error(`Source folder not accessible: ${sourceFolder}`)
+  if (!fs.existsSync(compareFolder)) throw new Error(`Comparison folder not accessible: ${compareFolder}`)
+
+  log.info(`[detectViaFolders] START  source="${sourceFolder}"  compare="${compareFolder}"`)
+
+  const mismatches    = []
+  let   totalCompared = 0
+  const LIMIT          = 8000
+  const YIELD_EVERY    = 50
+  const PROGRESS_EVERY = 20
+  const LOG_EVERY      = 500
+
+  async function walkAndCompare(dir, depth = 0) {
+    let entries
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+
+    for (const e of entries) {
+      if (totalCompared >= LIMIT) return
+      const srcFull = path.join(dir, e.name)
+      const relPath = path.relative(sourceFolder, srcFull)
+
+      if (e.isDirectory()) {
+        if (SKIP_DIRS.has(e.name.toLowerCase())) continue
+        // At the app root, only descend into known app subdirectories
+        if (depth === 0 && !APP_ROOT_DIRS.has(e.name.toLowerCase())) continue
+        await walkAndCompare(srcFull, depth + 1)
+        continue
+      }
+
+      const ext = path.extname(e.name).toLowerCase()
+      if (NON_DEPLOY_EXTS.has(ext)) continue
+
+      const relPathNorm = relPath.replace(/\\/g, '/')
+      if (ignoredRelPaths.has(relPathNorm)) continue
+
+      totalCompared++
+      if (totalCompared % YIELD_EVERY    === 0) await new Promise(r => setImmediate(r))
+      if (totalCompared % LOG_EVERY      === 0) log.info(`[detectViaFolders] progress: ${totalCompared} files, ${mismatches.length} mismatches`)
+      if (onProgress && totalCompared % PROGRESS_EVERY === 0) onProgress({ relPath: relPath.replace(/\\/g, '/'), compared: totalCompared })
+
+      const cmpFull = path.join(compareFolder, relPath)
+      let srcStat, cmpStat
+      try { srcStat = fs.statSync(srcFull) } catch { continue }
+      try { cmpStat = fs.statSync(cmpFull) } catch { cmpStat = null }
+
+      const missing  = !cmpStat
+      const timeDiff = cmpStat ? Math.abs(srcStat.mtimeMs - cmpStat.mtimeMs) : Infinity
+      if (!missing && timeDiff <= 2000) continue
+
+      mismatches.push({
+        relPath:   relPath.replace(/\\/g, '/'),
+        filename:  e.name,
+        srcPath:   srcFull,
+        cmpPath:   cmpFull,
+        srcMtime:  srcStat.mtime.toISOString(),
+        cmpMtime:  cmpStat ? cmpStat.mtime.toISOString() : null,
+        missing,
+        lastPatch: null
+      })
+    }
+  }
+
+  await walkAndCompare(sourceFolder, 0)
+
+  log.info(`[detectViaFolders] DONE  compared=${totalCompared}  mismatches=${mismatches.length}  hitLimit=${totalCompared >= LIMIT}`)
+
+  return {
+    sourceApp:    { id: null, name: path.basename(sourceFolder), path: sourceFolder },
+    compareApp:   { id: null, name: path.basename(compareFolder), path: compareFolder },
+    warnings:     [],
+    mismatches,
+    totalCompared,
+    hitLimit:     totalCompared >= LIMIT,
+    isManual:     true
+  }
+}
+
+module.exports = { detectAllStatus, detectViaApp, detectViaFolders }

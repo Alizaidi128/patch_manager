@@ -8,16 +8,20 @@ function fmtDate(iso) {
   }).replace(',', '')
 }
 
-export default function IgnoredFilesModal({ sourceAppId, compareAppId, sourceAppName, compareAppName, onClose }) {
+export default function IgnoredFilesModal({ sourceAppId, compareAppId, sourceFolder, compareFolder, sourceAppName, compareAppName, onClose }) {
   const [files, setFiles]       = useState([])
   const [loading, setLoading]   = useState(true)
   const [selected, setSelected] = useState(new Set())
   const [working, setWorking]   = useState(false)
 
+  const isFolderMode = !!(sourceFolder && compareFolder)
+
   async function load() {
     setLoading(true)
     try {
-      const rows = await window.api.invoke('detect:list-ignored', { sourceAppId, compareAppId })
+      const channel = isFolderMode ? 'detect:folder-list-ignored' : 'detect:list-ignored'
+      const payload = isFolderMode ? { sourceFolder, compareFolder } : { sourceAppId, compareAppId }
+      const rows = await window.api.invoke(channel, payload)
       setFiles(rows || [])
       setSelected(new Set())
     } finally {
@@ -30,7 +34,11 @@ export default function IgnoredFilesModal({ sourceAppId, compareAppId, sourceApp
   async function revert(relPaths) {
     setWorking(true)
     try {
-      await window.api.invoke('detect:revert-ignore', { sourceAppId, compareAppId, relPaths })
+      const channel = isFolderMode ? 'detect:folder-revert-ignore' : 'detect:revert-ignore'
+      const payload = isFolderMode
+        ? { sourceFolder, compareFolder, relPaths }
+        : { sourceAppId, compareAppId, relPaths }
+      await window.api.invoke(channel, payload)
       await load()
     } catch (e) {
       alert(`Failed to revert: ${e.message}`)

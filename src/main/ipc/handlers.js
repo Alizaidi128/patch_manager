@@ -455,6 +455,36 @@ function registerHandlers() {
     return detectViaApp(sourceAppId, compareAppId, onProgress, ignoredRelPaths)
   }, ({ sourceAppId, compareAppId }) => `source=${sourceAppId}  compare=${compareAppId}`)
 
+  handle('patch:detect-via-folders', async (event, { sourceFolder, compareFolder }) => {
+    const { detectViaFolders } = require('../deploy/detector')
+    const { getIgnoredFolderFiles } = require('../db/queries')
+    const ignoredRelPaths = new Set(getIgnoredFolderFiles(sourceFolder, compareFolder))
+    log.info(`[detect:via-folders] ignored list: ${ignoredRelPaths.size} files`)
+    const onProgress = ({ relPath, compared }) => {
+      try { event.sender.send('detect:via-app:progress', { relPath, compared }) } catch {}
+    }
+    return detectViaFolders(sourceFolder, compareFolder, onProgress, ignoredRelPaths)
+  }, ({ sourceFolder }) => sourceFolder)
+
+  handle('detect:folder-ignore-files', async (_, { sourceFolder, compareFolder, relPaths }) => {
+    const { addIgnoredFolderFiles } = require('../db/queries')
+    addIgnoredFolderFiles(sourceFolder, compareFolder, relPaths)
+    log.info(`[detect:folder-ignore-files] source="${sourceFolder}" ignored: ${relPaths.join(', ')}`)
+    return { success: true, count: relPaths.length }
+  }, ({ relPaths }) => `${relPaths.length} files`)
+
+  handle('detect:folder-list-ignored', async (_, { sourceFolder, compareFolder }) => {
+    const { getIgnoredFolderFilesFull } = require('../db/queries')
+    return getIgnoredFolderFilesFull(sourceFolder, compareFolder)
+  }, ({ sourceFolder }) => sourceFolder)
+
+  handle('detect:folder-revert-ignore', async (_, { sourceFolder, compareFolder, relPaths }) => {
+    const { removeIgnoredFolderFiles } = require('../db/queries')
+    removeIgnoredFolderFiles(sourceFolder, compareFolder, relPaths)
+    log.info(`[detect:folder-revert-ignore] source="${sourceFolder}" reverted: ${relPaths.join(', ')}`)
+    return { success: true, count: relPaths.length }
+  }, ({ relPaths }) => `${relPaths.length} files`)
+
   handle('detect:copy-file', async (_, { srcPath, cmpPath }) => {
     const fs   = require('fs')
     const path = require('path')

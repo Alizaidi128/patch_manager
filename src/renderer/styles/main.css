@@ -1966,6 +1966,15 @@ body {
 }
 .dm-app-select:focus { border-color: #007acc; }
 
+.dm-folder-browse { display: flex; gap: 6px; align-items: center; }
+.dm-folder-input {
+  flex: 1; padding: 6px 10px; border-radius: 4px;
+  border: 1px solid #3e3e42; background: #252526;
+  color: #cccccc; font-size: 13px; outline: none; cursor: default;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+[data-theme="light"] .dm-folder-input { background: var(--bg-input); color: var(--text-body); border-color: var(--border); }
+
 /* Validation */
 .dm-validation { display: flex; flex-direction: column; gap: 5px; margin-top: 2px; }
 .dm-checking { font-size: 12px; color: #888; padding: 4px 0; }

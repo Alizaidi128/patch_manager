@@ -117,6 +117,15 @@ function initializeDb() {
   try { db.exec(`ALTER TABLE apps ADD COLUMN db_service_name TEXT`) } catch {}
   try { db.exec(`ALTER TABLE apps ADD COLUMN db_user TEXT`) } catch {}
   try { db.exec(`ALTER TABLE apps ADD COLUMN db_password_enc TEXT`) } catch {}
+  try { db.exec(`
+    CREATE TABLE IF NOT EXISTS via_folder_ignored (
+      source_folder  TEXT NOT NULL,
+      compare_folder TEXT NOT NULL,
+      rel_path       TEXT NOT NULL,
+      ignored_at     TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (source_folder, compare_folder, rel_path)
+    )
+  `) } catch {}
 
   const insertDefault = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)')
   insertDefault.run('patches_root_dir', 'D:\\Office\\Patches_automated')

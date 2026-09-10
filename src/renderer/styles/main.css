@@ -2115,6 +2115,34 @@ body {
 [data-theme="light"] .dmr-src, [data-theme="light"] .dmr-cmp { color: var(--text-label); }
 [data-theme="light"] .dm-results-summary { color: var(--text-body); }
 
+/* ---- Ignored Files Modal ---- */
+.igf-modal { width: min(680px, 96vw); }
+.igf-subtitle { font-size: 11px; color: #666; margin-left: 10px; }
+.igf-empty { padding: 24px 20px; text-align: center; color: #666; font-size: 13px; flex: 1; }
+.igf-bulk-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 20px; border-bottom: 1px solid #2d2d2d; flex-shrink: 0;
+}
+.igf-list { flex: 1; overflow-y: auto; }
+.igf-header {
+  display: grid; grid-template-columns: 28px 1fr 130px 72px;
+  padding: 5px 14px 5px 10px; font-size: 11px; font-weight: 600; color: #666;
+  border-bottom: 1px solid #2d2d2d; position: sticky; top: 0; background: #1e1e1e; z-index: 1;
+}
+.igf-row {
+  display: grid; grid-template-columns: 28px 1fr 130px 72px;
+  padding: 7px 14px 7px 10px; border-bottom: 1px solid #2a2a2a;
+  align-items: center; font-size: 12px;
+}
+.igf-row:hover { background: #252526; }
+.igf-hcb, .igf-hact { display: flex; align-items: center; justify-content: center; }
+.igf-path { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.igf-filename { font-weight: 600; color: #d4d4d4; }
+.igf-relpath { font-size: 11px; color: #666; word-break: break-all; background: none; padding: 0; }
+.igf-date { font-size: 11px; color: #888; }
+.igf-act { display: flex; justify-content: flex-end; }
+.igf-hpath { } .igf-hdate { } .igf-hact { }
+
 /* ---- Batch result bar ---- */
 .batch-result-bar {
   display: flex;
@@ -2128,6 +2156,33 @@ body {
 }
 .batch-result-item.ok   { color: #4ec9b0; }
 .batch-result-item.fail { color: #f14c4c; }
+.batch-result-script.ok   { color: #9cdcfe; }
+.batch-result-script.fail { color: #f14c4c; }
+
+/* ---- Batch Oracle results panel ---- */
+.batch-oracle-panel {
+  margin: 0 0 8px;
+  border: 1px solid #333;
+  border-radius: 5px;
+  overflow: hidden;
+  font-size: 12px;
+}
+.batch-oracle-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 7px 12px;
+  background: #252526;
+  font-weight: 600; color: #ccc;
+  border-bottom: 1px solid #333;
+}
+.batch-oracle-patch { border-bottom: 1px solid #2a2a2a; }
+.batch-oracle-patch:last-child { border-bottom: none; }
+.batch-oracle-patch-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 12px; font-size: 12px; font-weight: 500;
+}
+.batch-oracle-counts { display: flex; gap: 8px; font-size: 11px; }
+.batch-oracle-ok   { color: #4ec9b0; }
+.batch-oracle-fail { color: #f14c4c; }
 
 /* ---- WAR panel (progress + results) ---- */
 .war-panel {
@@ -2372,6 +2427,47 @@ body {
   color: #4ec9b0;
   font-weight: 500;
 }
+
+.oracle-no-cfg {
+  font-size: 11px;
+  color: #666;
+  font-style: italic;
+}
+
+/* ---- Oracle script run panel ---- */
+.oracle-run-panel {
+  margin-top: 10px;
+  border: 1px solid #333;
+  border-radius: 5px;
+  overflow: hidden;
+  font-size: 12px;
+}
+.oracle-run-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 12px;
+  font-weight: 600;
+}
+.oracle-run-ok   { background: color-mix(in srgb, #4ec9b0 12%, #1e1e1e); color: #4ec9b0; }
+.oracle-run-fail { background: color-mix(in srgb, #e05252 12%, #1e1e1e); color: #e05252; }
+.oracle-run-close { margin-left: 8px; font-size: 11px; }
+.oracle-stmt-list { max-height: 220px; overflow-y: auto; padding: 4px 0; }
+.oracle-stmt {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 5px 12px;
+  border-bottom: 1px solid #252525;
+  flex-wrap: wrap;
+}
+.oracle-stmt:last-child { border-bottom: none; }
+.oracle-stmt-ok   { background: transparent; }
+.oracle-stmt-fail { background: color-mix(in srgb, #e05252 8%, transparent); }
+.oracle-stmt-num  { color: #666; font-size: 11px; flex-shrink: 0; min-width: 22px; text-align: right; padding-top: 1px; }
+.oracle-stmt-text { font-family: 'Consolas', monospace; font-size: 11px; color: #d4d4d4; word-break: break-all; white-space: pre-wrap; flex: 1; min-width: 0; }
+.oracle-stmt-rows { font-size: 11px; color: #4ec9b0; white-space: nowrap; padding-top: 1px; flex-shrink: 0; }
+.oracle-stmt-err  { font-size: 11px; color: #e05252; word-break: break-word; flex-basis: 100%; padding-left: 28px; }
 
 /* ============================================================
    Deploy Log

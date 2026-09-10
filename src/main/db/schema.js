@@ -112,6 +112,11 @@ function initializeDb() {
       PRIMARY KEY (source_app_id, compare_app_id, rel_path)
     )
   `) } catch {}
+  try { db.exec(`ALTER TABLE apps ADD COLUMN db_host TEXT`) } catch {}
+  try { db.exec(`ALTER TABLE apps ADD COLUMN db_port INTEGER DEFAULT 1521`) } catch {}
+  try { db.exec(`ALTER TABLE apps ADD COLUMN db_service_name TEXT`) } catch {}
+  try { db.exec(`ALTER TABLE apps ADD COLUMN db_user TEXT`) } catch {}
+  try { db.exec(`ALTER TABLE apps ADD COLUMN db_password_enc TEXT`) } catch {}
 
   const insertDefault = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)')
   insertDefault.run('patches_root_dir', 'D:\\Office\\Patches_automated')

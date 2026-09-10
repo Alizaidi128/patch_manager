@@ -176,6 +176,7 @@ function FileRow({ file, app, onMerge, onViewScript, onPathSaved, serverOffline 
 
 export default function PatchRow({ patch, app, onOpenFolder, onMerge, onDeploy, onDelete, onMarkDeployed, onViewScript, onPathSaved, selected, onToggleSelect, serverOffline }) {
   const [expanded, setExpanded] = useState(false)
+  const [scriptRun, setScriptRun] = useState(null) // null | 'running' | { success, results, error }
   const files = patch.files || []
 
   const hasWarning = files.some(
@@ -207,6 +208,20 @@ export default function PatchRow({ patch, app, onOpenFolder, onMerge, onDeploy, 
     : ''
 
   const patchStatusLabel = PATCH_STATUS_LABELS[patch.status] || patch.status
+
+  const dbConfigured = !!(app?.db_host && app?.db_user && app?.db_password_enc)
+  const hasScripts   = !!compiledScript
+
+  async function handleRunScripts() {
+    if (!compiledScript?.local_path) return
+    setScriptRun('running')
+    try {
+      const result = await window.api.invoke('oracle:run-script', { appId: app.id, scriptPath: compiledScript.local_path })
+      setScriptRun(result)
+    } catch (e) {
+      setScriptRun({ success: false, error: e.message, results: [] })
+    }
+  }
 
   function handleDelete(e) {
     e.stopPropagation()
@@ -310,7 +325,45 @@ export default function PatchRow({ patch, app, onOpenFolder, onMerge, onDeploy, 
             {allDone && (
               <span className="patch-all-done">✓ All deployed</span>
             )}
+            {hasScripts && dbConfigured && (
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={handleRunScripts}
+                disabled={scriptRun === 'running'}
+                title="Run Oracle SQL scripts from this patch"
+              >
+                {scriptRun === 'running' ? 'Running…' : '▶ Run DB Scripts'}
+              </button>
+            )}
+            {hasScripts && !dbConfigured && (
+              <span className="oracle-no-cfg" title="Configure Oracle DB in App Settings to enable script execution">
+                DB not configured
+              </span>
+            )}
           </div>
+
+          {scriptRun && scriptRun !== 'running' && (
+            <div className="oracle-run-panel">
+              <div className={`oracle-run-header ${scriptRun.success ? 'oracle-run-ok' : 'oracle-run-fail'}`}>
+                {scriptRun.success
+                  ? `✅ ${scriptRun.results?.length || 0} statement${scriptRun.results?.length !== 1 ? 's' : ''} executed successfully`
+                  : `❌ Script failed: ${scriptRun.error}`}
+                <button className="btn btn-ghost btn-xs oracle-run-close" onClick={() => setScriptRun(null)}>✕</button>
+              </div>
+              <div className="oracle-stmt-list">
+                {(scriptRun.results || []).map((r, i) => (
+                  <div key={i} className={`oracle-stmt ${r.success ? 'oracle-stmt-ok' : 'oracle-stmt-fail'}`}>
+                    <span className="oracle-stmt-num">{r.index + 1}.</span>
+                    <code className="oracle-stmt-text">{r.stmt}</code>
+                    {r.success && r.rowsAffected != null && (
+                      <span className="oracle-stmt-rows">{r.rowsAffected} row{r.rowsAffected !== 1 ? 's' : ''}</span>
+                    )}
+                    {!r.success && <span className="oracle-stmt-err">{r.error}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

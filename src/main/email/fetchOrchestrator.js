@@ -354,14 +354,14 @@ async function fetchForApp(app, sinceDate, toDate) {
         const extracted = extractBodyScript(rawContent)
         if (extracted) {
           scriptFiles.push({ filename: att.filename, savePath, content: extracted })
-        } else {
-          // Has no SQL — save as a reference so user can still see it
-          createPatchFile({
-            patch_id: patchId, original_filename: att.filename,
-            local_path: savePath, file_type: 'reference',
-            deploy_status: 'skipped', merge_status: null, deploy_target_path: null
-          })
         }
+        // Always register the original .txt file so it appears in the patch file list,
+        // whether or not SQL was detected (if SQL was found it also goes into compiled_scripts.txt)
+        createPatchFile({
+          patch_id: patchId, original_filename: att.filename,
+          local_path: savePath, file_type: 'reference',
+          deploy_status: 'skipped', merge_status: null, deploy_target_path: null
+        })
         continue
       }
 

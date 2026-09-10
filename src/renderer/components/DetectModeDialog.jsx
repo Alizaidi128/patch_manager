@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { XCircleIcon, CheckCircleIcon, AlertTriangleIcon } from '../icons.jsx'
+import IgnoredFilesModal from './IgnoredFilesModal.jsx'
 
 function fmtMtime(iso) {
   if (!iso) return '—'
@@ -28,11 +29,12 @@ export default function DetectModeDialog({
   const [compareId, setCompareId]   = useState('')
   const [checking, setChecking]     = useState(false)
   const [validation, setValidation] = useState(null)
-  const [selected, setSelected]     = useState(new Set())
-  const [rowStates, setRowStates]   = useState({})   // relPath → 'copied'|'ignored'|'copying'|'error:msg'
-  const [confirmIgnore, setConfirmIgnore] = useState(null)  // relPaths[] pending confirm
-  const [dropdownOpen, setDropdownOpen]   = useState(null)  // relPath with open dropdown
+  const [selected, setSelected]           = useState(new Set())
+  const [rowStates, setRowStates]         = useState({})   // relPath → 'copied'|'ignored'|'copying'|'error:msg'
+  const [confirmIgnore, setConfirmIgnore] = useState(null) // relPaths[] pending confirm
+  const [dropdownOpen, setDropdownOpen]   = useState(null) // relPath with open dropdown
   const [bulkWorking, setBulkWorking]     = useState(false)
+  const [showIgnored, setShowIgnored]     = useState(false)
   const cancelRef    = useRef(false)
   const progressEndRef = useRef(null)
 
@@ -402,6 +404,9 @@ export default function DetectModeDialog({
 
                 <div className="dm-results-footer">
                   <span className="dm-results-apps">{task.result.sourceApp.name} → {task.result.compareApp.name}</span>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setShowIgnored(true)}>
+                    View Ignored Files
+                  </button>
                   <button className="btn btn-secondary btn-sm" onClick={onClearTask}>New Comparison</button>
                 </div>
               </>
@@ -445,6 +450,17 @@ export default function DetectModeDialog({
           <div className="dm-footer">
             <button className="btn btn-ghost btn-sm" onClick={onClearTask}>Back</button>
           </div>
+        )}
+
+        {/* Ignored files child modal */}
+        {showIgnored && isDone && (
+          <IgnoredFilesModal
+            sourceAppId={task.result.sourceApp.id}
+            compareAppId={task.result.compareApp.id}
+            sourceAppName={task.result.sourceApp.name}
+            compareAppName={task.result.compareApp.name}
+            onClose={() => setShowIgnored(false)}
+          />
         )}
 
         {/* Ignore confirmation overlay */}

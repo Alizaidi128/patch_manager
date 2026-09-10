@@ -1,6 +1,6 @@
 {
   "name": "patch-manager",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "Automated patch management for Outlook-received software patches",
   "main": "electron.js",
   "scripts": {
@@ -18,6 +18,7 @@
     "electron-updater": "^6.8.9",
     "fast-xml-parser": "^4.3.4",
     "node-unrar-js": "^2.0.0",
+    "oracledb": "^7.0.1",
     "ssh2": "^1.15.0",
     "ssh2-sftp-client": "^10.0.3"
   },
@@ -36,7 +37,14 @@
     "appId": "com.patchmanager.app",
     "productName": "Patch Manager",
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "resources/icon.ico"
     },
     "files": [
@@ -68,6 +76,7 @@
     "electron@29.4.6": true,
     "esbuild@0.21.5": true,
     "better-sqlite3@9.6.0": true,
-    "ssh2@1.17.0": true
+    "ssh2@1.17.0": true,
+    "oracledb@7.0.1": true
   }
 }

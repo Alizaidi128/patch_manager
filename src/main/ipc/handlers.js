@@ -2,7 +2,7 @@ const { ipcMain, dialog, shell, app } = require('electron')
 const log = require('../utils/logger')
 const {
   getAllSettings, saveSettings,
-  getAllApps, saveApp, deleteApp,
+  getAllApps, getApp, saveApp, deleteApp,
   getPatchesForApp, getPatchById, getPatchFiles,
   updatePatch, updatePatchFile, getLogEntries, deletePatch
 } = require('../db/queries')
@@ -61,7 +61,15 @@ function registerHandlers() {
   ipcMain.handle('app:list', async () => getAllApps())
 
   ipcMain.handle('app:save', async (_, appData) => {
-    const id = saveApp(appData)
+    const { safeStorage } = require('electron')
+    const dataToSave = { ...appData }
+    if (dataToSave.db_password) {
+      if (safeStorage.isEncryptionAvailable()) {
+        dataToSave.db_password_enc = safeStorage.encryptString(dataToSave.db_password).toString('base64')
+      }
+    }
+    delete dataToSave.db_password
+    const id = saveApp(dataToSave)
     return { success: true, id }
   })
 
@@ -462,6 +470,46 @@ function registerHandlers() {
     log.info(`[detect:ignore-files] source=${sourceAppId} compare=${compareAppId} ignored: ${relPaths.join(', ')}`)
     return { success: true, count: relPaths.length }
   }, ({ relPaths }) => `${relPaths.length} files`)
+
+  handle('detect:list-ignored', async (_, { sourceAppId, compareAppId }) => {
+    const { getIgnoredFilesFull } = require('../db/queries')
+    return getIgnoredFilesFull(sourceAppId, compareAppId)
+  }, ({ sourceAppId, compareAppId }) => `source=${sourceAppId} compare=${compareAppId}`)
+
+  handle('detect:revert-ignore', async (_, { sourceAppId, compareAppId, relPaths }) => {
+    const { removeIgnoredFiles } = require('../db/queries')
+    removeIgnoredFiles(sourceAppId, compareAppId, relPaths)
+    log.info(`[detect:revert-ignore] source=${sourceAppId} compare=${compareAppId} reverted: ${relPaths.join(', ')}`)
+    return { success: true, count: relPaths.length }
+  }, ({ relPaths }) => `${relPaths.length} files`)
+
+  // ---- Oracle DB ----
+  handle('oracle:test-connection', async (_, { form }) => {
+    const { testConnection } = require('../oracle/oracleManager')
+    return testConnection(form)
+  }, () => 'oracle test-connection')
+
+  handle('oracle:run-script', async (event, { appId, scriptPath }) => {
+    const fs = require('fs')
+    const { getApp } = require('../db/queries')
+    const { runScript } = require('../oracle/oracleManager')
+    const appRow = getApp(appId)
+    if (!appRow) throw new Error(`App ${appId} not found`)
+    if (!appRow.db_host || !appRow.db_user) throw new Error('Oracle DB not configured for this app')
+    const sqlContent = fs.readFileSync(scriptPath, 'utf8')
+    const onProgress = (p) => { try { event.sender.send('oracle:script-progress', p) } catch {} }
+    const result = await runScript(appId, appRow, sqlContent, onProgress)
+    const { addLogEntry } = require('../db/queries')
+    const status = result.success ? 'success' : 'error'
+    addLogEntry({ app_id: appId, action: 'oracle-script', status, detail: result.success ? `${result.results.length} statements executed` : result.error })
+    return result
+  }, ({ appId }) => `appId=${appId}`)
+
+  handle('oracle:disconnect', async (_, { appId }) => {
+    const { closeConnection } = require('../oracle/oracleManager')
+    await closeConnection(appId)
+    return { success: true }
+  }, ({ appId }) => `appId=${appId}`)
 
   // ---- Dev/test: revert deployed patches back to staged ----
   ipcMain.handle('debug:revert-patches', async (_, { appId }) => {

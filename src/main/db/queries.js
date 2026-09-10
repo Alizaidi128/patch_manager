@@ -149,9 +149,24 @@ function getIgnoredFiles(sourceAppId, compareAppId) {
     .map(r => r.rel_path)
 }
 
+function getIgnoredFilesFull(sourceAppId, compareAppId) {
+  return getDb()
+    .prepare('SELECT rel_path, ignored_at FROM via_app_ignored WHERE source_app_id = ? AND compare_app_id = ? ORDER BY ignored_at DESC')
+    .all(sourceAppId, compareAppId)
+}
+
 function addIgnoredFiles(sourceAppId, compareAppId, relPaths) {
   const stmt = getDb().prepare(
     'INSERT OR IGNORE INTO via_app_ignored (source_app_id, compare_app_id, rel_path) VALUES (?, ?, ?)'
+  )
+  getDb().transaction(paths => {
+    for (const rp of paths) stmt.run(sourceAppId, compareAppId, rp)
+  })(relPaths)
+}
+
+function removeIgnoredFiles(sourceAppId, compareAppId, relPaths) {
+  const stmt = getDb().prepare(
+    'DELETE FROM via_app_ignored WHERE source_app_id = ? AND compare_app_id = ? AND rel_path = ?'
   )
   getDb().transaction(paths => {
     for (const rp of paths) stmt.run(sourceAppId, compareAppId, rp)
@@ -164,5 +179,5 @@ module.exports = {
   getPatchesForApp, getPatchById, createPatch, updatePatch, getPendingPatchCount,
   getPatchFiles, createPatchFile, updatePatchFile,
   addLogEntry, getLogEntries, deletePatch,
-  getIgnoredFiles, addIgnoredFiles
+  getIgnoredFiles, getIgnoredFilesFull, addIgnoredFiles, removeIgnoredFiles
 }

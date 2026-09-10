@@ -23,6 +23,7 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
   const [selected, setSelected]     = useState(new Set())
   const [deploying, setDeploying]   = useState(false)
   const [batchResult, setBatchResult] = useState(null)
+  const [batchScriptResults, setBatchScriptResults] = useState(null) // [{ patchId, subject, scriptResult }]
   const [confirm, setConfirm]       = useState(null)
   const [warState, setWarState]       = useState(null)
   const [tomcatState, setTomcatState] = useState(null)
@@ -173,6 +174,7 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
   async function handleDeploySelected() {
     if (!selected.size || deploying) return
     setBatchResult(null)
+    setBatchScriptResults(null)
     setDeploying(true)
     try {
       const toDeploy = patches
@@ -185,6 +187,36 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
       const patchIds = toDeploy.map(p => p.id)
       const results = await window.api.invoke('deploy:batch', { patchIds })
       setBatchResult(results)
+
+      // Run Oracle scripts in oldest-first order for all patches that have scripts
+      // (regardless of whether files were newly deployed or already skipped)
+      const dbReady = app?.db_host && app?.db_user && app?.db_password_enc
+      if (dbReady) {
+        const scriptRuns = []
+        for (const r of results) {
+          if (r.error) continue  // skip only on hard error, not on skipped
+          const patchObj = toDeploy.find(p => p.id === r.patchId)
+          const scriptFile = (patchObj?.files || []).find(
+            f => f.file_type === 'db_script' && f.original_filename === 'compiled_scripts.txt'
+          )
+          if (!scriptFile?.local_path) continue
+          let scriptResult
+          try {
+            scriptResult = await window.api.invoke('oracle:run-script', {
+              appId: app.id, scriptPath: scriptFile.local_path
+            })
+          } catch (e) {
+            scriptResult = { success: false, error: e.message, results: [] }
+          }
+          scriptRuns.push({
+            patchId: r.patchId,
+            subject: patchObj?.email_subject || `Patch #${r.patchId}`,
+            scriptResult
+          })
+        }
+        if (scriptRuns.length) setBatchScriptResults(scriptRuns)
+      }
+
       load()
     } finally {
       setDeploying(false)
@@ -518,7 +550,50 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
                   : `✓ Patch ${r.patchId} deployed`}
             </span>
           ))}
-          <button className="btn btn-ghost btn-sm" onClick={() => setBatchResult(null)}>✕</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => { setBatchResult(null); setBatchScriptResults(null) }}>✕</button>
+        </div>
+      )}
+
+      {batchScriptResults && (
+        <div className="batch-oracle-panel">
+          <div className="batch-oracle-header">
+            <span>Oracle Script Results</span>
+            <button className="btn btn-ghost btn-sm" onClick={() => setBatchScriptResults(null)}>✕</button>
+          </div>
+          {batchScriptResults.map((run, ri) => {
+            const sr   = run.scriptResult
+            const ok   = (sr.results || []).filter(s => s.success).length
+            const fail = (sr.results || []).filter(s => !s.success).length
+            return (
+              <div key={ri} className="batch-oracle-patch">
+                <div className={`batch-oracle-patch-header ${sr.success ? 'oracle-run-ok' : 'oracle-run-fail'}`}>
+                  {sr.success ? `✅ ${run.subject}` : `❌ ${run.subject}`}
+                  <span className="batch-oracle-counts">
+                    {ok > 0 && <span className="batch-oracle-ok">{ok} ok</span>}
+                    {fail > 0 && <span className="batch-oracle-fail">{fail} failed</span>}
+                  </span>
+                </div>
+                <div className="oracle-stmt-list">
+                  {(sr.results || []).map((s, si) => (
+                    <div key={si} className={`oracle-stmt ${s.success ? 'oracle-stmt-ok' : 'oracle-stmt-fail'}`}>
+                      <span className="oracle-stmt-num">{s.index + 1}.</span>
+                      <code className="oracle-stmt-text">{s.stmt}</code>
+                      {s.success && s.rowsAffected != null && (
+                        <span className="oracle-stmt-rows">{s.rowsAffected} row{s.rowsAffected !== 1 ? 's' : ''}</span>
+                      )}
+                      {!s.success && <span className="oracle-stmt-err">{s.error}</span>}
+                    </div>
+                  ))}
+                  {!sr.results?.length && sr.error && (
+                    <div className="oracle-stmt oracle-stmt-fail">
+                      <span className="oracle-stmt-num">—</span>
+                      <span className="oracle-stmt-err">{sr.error}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })}
         </div>
       )}
 

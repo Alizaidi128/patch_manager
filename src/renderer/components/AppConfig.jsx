@@ -62,17 +62,20 @@ function makeDefault() {
     app_root_path: '', tomcat_service_name: '', smb_path: '',
     local_src_path: '', war_name: '', remote_war_path: '', tomcat_remote_path: '',
     sftp_server_path: '', patch_path: '', tomcat_restart_cmd: '', tomcat_run_as_user: '',
+    db_host: '', db_port: 1521, db_service_name: '', db_user: '', db_password: '',
     notes: ''
   }
 }
 
 export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
-  const [form, setForm]               = useState(app ? { ...app } : makeDefault())
-  const [showPicker, setShowPicker]   = useState(false)
-  const [testing, setTesting]         = useState(false)
-  const [testResult, setTestResult]   = useState(null)
-  const [saving, setSaving]           = useState(false)
-  const [alert, setAlert]             = useState(null)
+  const [form, setForm]                   = useState(app ? { ...app, db_password: '' } : makeDefault())
+  const [showPicker, setShowPicker]       = useState(false)
+  const [testing, setTesting]             = useState(false)
+  const [testResult, setTestResult]       = useState(null)
+  const [oracleTesting, setOracleTesting] = useState(false)
+  const [oracleTestResult, setOracleTestResult] = useState(null)
+  const [saving, setSaving]               = useState(false)
+  const [alert, setAlert]                 = useState(null)
 
   const isNew = !form.id
 
@@ -94,6 +97,14 @@ export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
     const res = await window.api.invoke('app:test-connection', form)
     setTestResult(res)
     setTesting(false)
+  }
+
+  async function handleTestOracle() {
+    setOracleTesting(true)
+    setOracleTestResult(null)
+    const res = await window.api.invoke('oracle:test-connection', { form })
+    setOracleTestResult(res)
+    setOracleTesting(false)
   }
 
   async function handleSave() {
@@ -522,6 +533,79 @@ export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
             </div>
           </>
         )}
+      </div>
+
+      {/* ── Oracle Database ── */}
+      <div className="settings-section">
+        <h3>Oracle Database <span className="label-note">(optional)</span></h3>
+        <p className="form-hint" style={{ marginBottom: 12 }}>
+          Configure to enable "Run DB Scripts" after deploying patches that contain SQL scripts.
+        </p>
+
+        <div className="form-grid-2" style={{ marginBottom: 14 }}>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label>Host</label>
+            <input
+              type="text" className="form-control"
+              value={form.db_host || ''}
+              onChange={e => { set('db_host', e.target.value); setOracleTestResult(null) }}
+              placeholder="192.168.1.10"
+            />
+          </div>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label>Port</label>
+            <input
+              type="number" className="form-control"
+              style={{ maxWidth: 90 }}
+              value={form.db_port || 1521}
+              onChange={e => set('db_port', parseInt(e.target.value, 10) || 1521)}
+              min={1} max={65535}
+            />
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label>Service Name</label>
+          <input
+            type="text" className="form-control"
+            value={form.db_service_name || ''}
+            onChange={e => set('db_service_name', e.target.value)}
+            placeholder="ORCL"
+          />
+        </div>
+
+        <div className="cred-card">
+          <div className="cred-card-title">DATABASE CREDENTIALS</div>
+          <div className="form-grid-2" style={{ marginBottom: 0 }}>
+            <CredField label="USERNAME"
+              value={form.db_user || ''}
+              onChange={v => set('db_user', v)}
+              placeholder="SCHEMA_USER"
+              canCopy
+            />
+            <CredField label="PASSWORD"
+              value={form.db_password || ''}
+              onChange={v => { set('db_password', v); setOracleTestResult(null) }}
+              type="password"
+              placeholder={form.db_password_enc ? '(saved — leave blank to keep)' : ''}
+            />
+          </div>
+        </div>
+
+        <div className="test-connection-row">
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={handleTestOracle}
+            disabled={oracleTesting || !form.db_host || !form.db_user || (!form.db_password && !form.db_password_enc)}
+          >
+            {oracleTesting ? 'Testing…' : 'Test DB Connection'}
+          </button>
+          {oracleTestResult && (
+            <span className={`test-result ${oracleTestResult.success ? 'ok' : 'fail'}`}>
+              {oracleTestResult.success ? '✅' : '❌'} {oracleTestResult.message}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* ── Notes ── */}

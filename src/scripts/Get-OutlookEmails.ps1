@@ -103,8 +103,9 @@ foreach ($mail in $mailItems) {
       # Strip Unicode line/paragraph separators (U+2028/U+2029) - PS 5.1 ConvertTo-Json chokes on these
       $raw = $raw -replace [char]0x2028, ' '
       $raw = $raw -replace [char]0x2029, ' '
-      # Collapse excessive whitespace and cap length
-      $raw = $raw -replace '\s{3,}', "`n"
+      # Collapse excessive horizontal whitespace; preserve newlines so quote-strip patterns work
+      $raw = $raw -replace '[^\S\r\n]{2,}', ' '
+      $raw = $raw -replace '(\r?\n){4,}', "`n`n`n"
       if ($raw.Length -gt 4000) { $raw = $raw.Substring(0, 4000) }
       $bodyText = $raw.Trim()
     }

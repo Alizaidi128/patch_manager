@@ -464,8 +464,10 @@ export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
               />
               <p className="form-hint">
                 If the SSH login user differs from the Tomcat owner, enter the owner's username here.
-                The restart command will be wrapped as <code>sudo su - oracle -c "..."</code>.
-                Requires <code>NOPASSWD</code> sudoers access for your login user.
+                The restart command will be wrapped as <code>sudo -u oracle bash -l -c 'set +e; ...'</code>.
+                Requires <code>(oracle) NOPASSWD</code> sudoers access for your login user — e.g.{' '}
+                <code>your_user ALL=(oracle) NOPASSWD: ALL</code>.
+                The <code>set +e</code> prefix prevents non-fatal errors (like pkill failing on a non-oracle PID) from aborting the sequence.
               </p>
             </div>
           </div>

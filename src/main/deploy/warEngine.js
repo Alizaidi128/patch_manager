@@ -1,6 +1,18 @@
 const fs   = require('fs')
 const path = require('path')
 const os   = require('os')
+const log  = require('../utils/logger')
+
+// pkill -f scans /proc/<pid>/cmdline for every process, including the bash shell
+// that contains our entire -c argument. If the -f pattern appears literally in the
+// bash cmdline, pkill sends SIGTERM to its own parent, killing the script.
+// Bracketing the first char of the pattern (e.g. "Bootstrap" → "[B]ootstrap") fixes this:
+// [B] as a regex matches 'B' in the Tomcat cmdline, but the literal "[B]ootstrap" string
+// in bash's own cmdline does NOT satisfy the regex (the engine sees '[' where it expects 'B').
+function preventPkillSelfMatch(cmd) {
+  return cmd.replace(/(pkill\s+\S*-f\S*\s+)(["'])(.+?)\2/g,
+    (_, pre, q, pat) => `${pre}${q}[${pat[0]}]${pat.slice(1)}${q}`)
+}
 
 function sftpOpts(app) {
   const opts = { host: app.server_host, port: app.server_port || 22, username: app.server_user, readyTimeout: 30000, retries: 0 }
@@ -91,32 +103,43 @@ async function restartTomcatSSH(app) {
     throw new Error('No Tomcat path or service name configured')
   }
 
-  // Wrap with sudo su - user so the command runs as the Tomcat process owner.
-  // Required when SSH login user (e.g. centegy.admin) differs from Tomcat owner (e.g. oracle).
+  // Wrap with sudo -u <user> bash -l so the command runs as the Tomcat process owner.
+  // Uses sudo's direct user-switch (requires (oracle) NOPASSWD, not root).
+  // bash -l gives oracle's full login environment (JAVA_HOME, CATALINA_HOME, etc.).
   const runAs = (app.tomcat_run_as_user || '').trim()
   if (runAs) {
+    cmd = preventPkillSelfMatch(cmd)
     const escaped = cmd.replace(/'/g, `'"'"'`)
-    cmd = `sudo su - ${runAs} -c '${escaped}'`
+    // exec 1>&2  → redirects stdout to stderr so all output reaches our capture regardless of
+    //              oracle's .bash_profile silently redirecting stdout to a log file on non-TTY sessions.
+    // trap "" ERR → clears any ERR trap in the profile (trap ERR fires even with set +e).
+    // set +e      → disables exit-on-error so pkill failing on a non-oracle PID doesn't abort the sequence.
+    // whoami      → confirms the effective user in the output.
+    cmd = `sudo -u ${runAs} bash -l -c 'exec 1>&2; trap "" ERR; set +e; echo "[restart] user=$(whoami)"; ${escaped}'`
   }
 
   return new Promise((resolve, reject) => {
     const conn = new Client()
-    let out = ''
+    let stdout = '', stderr = ''
     conn.on('ready', () => {
-      const execOpts = runAs ? { pty: { rows: 24, cols: 80, term: 'vt100' } } : {}
-      conn.exec(cmd, execOpts, (err, stream) => {
+      log.info(`[warEngine] tomcat restart SSH cmd: ${cmd}`)
+      conn.exec(cmd, (err, stream) => {
         if (err) { conn.end(); return reject(err) }
-        stream.on('data', d => { out += d.toString() })
-        stream.stderr.on('data', d => { out += d.toString() })
+        stream.on('data', d => { stdout += d.toString() })
+        stream.stderr.on('data', d => { stderr += d.toString() })
         stream.on('close', (code) => {
           conn.end()
-          // "Permission denied" on log files means startup failed even if exit code is 0
-          // (startup.sh launches Tomcat as background process and exits 0 immediately)
-          const permDenied = /permission denied/i.test(out)
-          if (code !== 0 || permDenied) {
-            reject(new Error(out.trim() || `Tomcat restart exited with code ${code}`))
+          const out = [stdout, stderr].filter(Boolean).join('\n').trim()
+          log.info(`[warEngine] tomcat restart stdout=${JSON.stringify(stdout.trim())} stderr=${JSON.stringify(stderr.trim())} code=${code}`)
+          // Strip pkill "Operation not permitted" lines — non-fatal when pkill matched a non-oracle PID.
+          const filteredOut = out.replace(/pkill:.*operation not permitted[^\n]*/gi, '').trim()
+          const permDenied = /permission denied/i.test(filteredOut)
+          // code==null means SSH server didn't send exit-status — rely on output checks only
+          const failed = (code != null && code !== 0) || permDenied
+          if (failed) {
+            reject(new Error(out || `Tomcat restart exited with code ${code}`))
           } else {
-            resolve(out.trim())
+            resolve(out)
           }
         })
       })

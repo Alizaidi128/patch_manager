@@ -356,22 +356,27 @@ function registerHandlers() {
     if (!app.war_name)       return { success: false, error: 'war_name not configured' }
     if (!app.app_root_path)  return { success: false, error: 'app_root_path not configured' }
 
-    // Build backup label from last deployed patch: "06-Sep-2026 folder 4"
     const db = require('../db/schema').getDb()
-    const lastPatch = db.prepare(
+
+    // Backup label = what is currently deployed on the server (stored from last WAR deploy).
+    // Falls back to today's date on first-ever deploy.
+    const backupLabel = app.last_war_label ||
+      new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-')
+
+    // New label = latest locally-deployed patch right now (will be saved after success).
+    const latestPatch = db.prepare(
       `SELECT email_date, local_folder FROM patches WHERE app_id = ? AND status = 'deployed'
        ORDER BY deployed_at DESC, email_date DESC LIMIT 1`
     ).get(appId)
-
-    let backupLabel
-    if (lastPatch?.email_date) {
-      const d       = new Date(lastPatch.email_date)
+    let newWarLabel
+    if (latestPatch?.email_date) {
+      const d       = new Date(latestPatch.email_date)
       const dateTag = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-')
-      const lastSeg = lastPatch.local_folder ? path.basename(lastPatch.local_folder) : ''
+      const lastSeg = latestPatch.local_folder ? path.basename(latestPatch.local_folder) : ''
       const folderPart = /^\d+$/.test(lastSeg) ? ` folder ${lastSeg}` : ''
-      backupLabel = `${dateTag}${folderPart}`
+      newWarLabel = `${dateTag}${folderPart}`
     } else {
-      backupLabel = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-')
+      newWarLabel = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-')
     }
 
     const steps = []
@@ -401,7 +406,9 @@ function registerHandlers() {
         event.sender.send('war:progress', { step, pct })
       }, backupLabel)
 
-      log.info('war:deploy success', { appId, steps })
+      // Record what was just deployed so next deploy uses it as the backup label
+      db.prepare('UPDATE apps SET last_war_label = ? WHERE id = ?').run(newWarLabel, appId)
+      log.info('war:deploy success', { appId, steps, newWarLabel })
       return { success: true, steps }
     } catch (e) {
       log.error('war:deploy failed', e)

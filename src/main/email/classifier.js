@@ -28,8 +28,8 @@ function classifyAttachment(filename) {
   if (ext === '.properties') return 'props_merge'
   if (lower.includes('log4j') || lower.includes('log4property')) return 'props_merge'
   if (ext === '.txt' && (lower.includes('propert') || lower.includes('log4'))) return 'props_merge'
-  // Label bundle files: labels.txt, label.txt, labelsbundle.txt, etc.
-  if (ext === '.txt' && /^labels?(?:bundle)?(\.|_|$)/i.test(path.basename(lower))) return 'props_merge'
+  // Label bundle files: any filename containing "label" (GH-500 Labels.txt, LabelsBundleFile.properties, etc.)
+  if (lower.includes('label')) return 'props_merge'
 
   // DB / shell scripts
   if (SCRIPT_EXTS.has(ext)) return 'db_script'

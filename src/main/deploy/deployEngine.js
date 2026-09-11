@@ -258,31 +258,36 @@ async function restartTomcatSFTP(app) {
     ? app.tomcat_restart_cmd
     : `sudo systemctl restart ${name} 2>&1 || sudo service ${name} restart 2>&1`
 
-  // Wrap with sudo su - user so the command runs as the Tomcat process owner.
-  // Required when SSH login user (e.g. centegy.admin) differs from Tomcat owner (e.g. oracle).
+  // Wrap with sudo -u <user> bash -l so the command runs as the Tomcat process owner.
+  // Uses sudo's direct user-switch (requires (oracle) NOPASSWD, not root).
+  // bash -l gives oracle's full login environment (JAVA_HOME, CATALINA_HOME, etc.).
   const runAs = (app.tomcat_run_as_user || '').trim()
   if (runAs) {
-    // Escape single quotes in the command before embedding in -c '...'
+    // Bracket first char of pkill -f patterns to prevent pkill matching its own bash parent process
+    cmd = cmd.replace(/(pkill\s+\S*-f\S*\s+)(["'])(.+?)\2/g, (_, pre, q, pat) => `${pre}${q}[${pat[0]}]${pat.slice(1)}${q}`)
     const escaped = cmd.replace(/'/g, `'"'"'`)
-    cmd = `sudo su - ${runAs} -c '${escaped}'`
+    cmd = `sudo -u ${runAs} bash -l -c 'exec 1>&2; trap "" ERR; set +e; echo "[restart] user=$(whoami)"; ${escaped}'`
   }
 
   return new Promise((resolve, reject) => {
     const conn = new Client()
-    let out = ''
+    let stdout = '', stderr = ''
     conn.on('ready', () => {
-      // Request a PTY — required for sudo su - to work without a password prompt
-      const execOpts = runAs ? { pty: { rows: 24, cols: 80, term: 'vt100' } } : {}
-      conn.exec(cmd, execOpts, (err, stream) => {
+      const log = require('../utils/logger')
+      log.info(`[deployEngine] tomcat restart SSH cmd: ${cmd}`)
+      conn.exec(cmd, (err, stream) => {
         if (err) { conn.end(); return reject(err) }
-        stream.on('data', d => { out += d })
-        stream.stderr.on('data', d => { out += d })
+        stream.on('data', d => { stdout += d })
+        stream.stderr.on('data', d => { stderr += d })
         stream.on('close', (code) => {
           conn.end()
-          // With PTY, exit code is sometimes unreliable — check for error keywords in output
-          const failed = code !== 0 || /permission denied|error|failed/i.test(out) && !/started|running/i.test(out)
-          if (failed && code !== 0) reject(new Error(`Tomcat restart exit ${code}: ${out.trim()}`))
-          else resolve(out.trim())
+          log.info(`[deployEngine] tomcat restart stdout=${JSON.stringify(stdout.trim())} stderr=${JSON.stringify(stderr.trim())} code=${code}`)
+          const out = [stdout, stderr].filter(Boolean).join('\n').trim()
+          const filteredOut = out.replace(/pkill:.*operation not permitted[^\n]*/gi, '').trim()
+          const permDenied = /permission denied/i.test(filteredOut)
+          const failed = (code != null && code !== 0) || permDenied
+          if (failed) reject(new Error(out || `Tomcat restart exit ${code}`))
+          else resolve(out)
         })
       })
     })

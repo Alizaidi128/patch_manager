@@ -32,11 +32,14 @@ const KNOWN_PATH_RULES = [
   },
   // Label bundle files → the whole rb/ directory (all 3 locale variants get the same entries)
   {
-    test:    n => /^labels?(?:bundle)?(\.|_|$)/i.test(path.basename(n)),
+    test:    n => n.toLowerCase().includes('label'),
     relPath: path.join('WEB-INF', 'classes', 'geninslib', 'rb'),
     isDir:   true,
   },
 ]
+
+// File extensions that are known binary formats — skip UTF-8 SQL scan for these
+const BINARY_EXTS = new Set(['.doc','.docx','.xls','.xlsx','.pdf','.ppt','.pptx','.zip','.rar','.war','.jar','.class'])
 
 // For SFTP apps files are deployed locally (local_src_path), not to the remote server path.
 function appLocalBase(app) {
@@ -72,11 +75,11 @@ const SQL_KW = /\b(?:DROP|CREATE|ALTER|INSERT|UPDATE|DELETE|MERGE|TRUNCATE|SELEC
 // not from older messages in the thread that appear as quoted text.
 function stripEmailQuotes(body) {
   if (!body) return body
-  // Outlook plain-text reply delimiter: blank line then "From: " (start of quoted header)
   const patterns = [
-    /\r?\n\r?\n[ \t]*From[ \t]*:[ \t]/i,           // blank line + "From:"
+    /\r?\n\r?\n[ \t]*From[ \t]*:[ \t]/i,                   // blank line + "From:" (full body)
+    /\r?\n[ \t]*From[ \t]*:[^\n]+\r?\n[ \t]*Sent[ \t]*:/i, // "From:\nSent:" pair (PS collapses blanks)
     /\r?\n[ \t]*-{4,}[ \t]*Original Message[ \t]*-{4,}/i,  // -----Original Message-----
-    /\r?\n[ \t]*_{4,}/i,                            // ____ divider (Outlook mobile)
+    /\r?\n[ \t]*_{4,}/i,                                    // ____ divider (Outlook mobile)
   ]
   let cutAt = body.length
   for (const p of patterns) {
@@ -354,6 +357,8 @@ async function fetchForApp(app, sinceDate, toDate) {
         const extracted = extractBodyScript(rawContent)
         if (extracted) {
           scriptFiles.push({ filename: att.filename, savePath, content: extracted })
+        } else if (hasSqlContent(rawContent)) {
+          scriptFiles.push({ filename: att.filename, savePath })
         }
         // Always register the original .txt file so it appears in the patch file list,
         // whether or not SQL was detected (if SQL was found it also goes into compiled_scripts.txt)
@@ -431,6 +436,15 @@ async function fetchForApp(app, sinceDate, toDate) {
             merge_status: mergeStatus, deploy_target_path: deployPath
           })
 
+          // Universal SQL scan for non-db_script inner files (db_script handled above with continue)
+          if (!BINARY_EXTS.has(path.extname(innerName.toLowerCase()))) {
+            let rawContent = ''
+            try { rawContent = fs.readFileSync(innerPath, 'utf8') } catch {}
+            if (rawContent && hasSqlContent(rawContent)) {
+              scriptFiles.push({ filename: `${att.filename}/${innerName}`, savePath: innerPath })
+            }
+          }
+
           if (needsPath(innerType) && (!deployPath || confidence === 'low')) {
             log.warn(`[fetch:${app.name}] Missing/low-confidence path for "${innerName}" — queuing path dialog`)
             const isMerge = innerType === 'xml_merge' || innerType === 'props_merge'
@@ -495,6 +509,16 @@ async function fetchForApp(app, sinceDate, toDate) {
         merge_status:       mergeStatus,
         deploy_status:      deployStatus
       })
+
+      // Universal SQL scan: any text-readable file may contain SQL, regardless of its classified type.
+      // db_script files are already handled above (they continue before reaching here).
+      if (!BINARY_EXTS.has(path.extname(att.filename.toLowerCase()))) {
+        let rawContent = ''
+        try { rawContent = fs.readFileSync(savePath, 'utf8') } catch {}
+        if (rawContent && hasSqlContent(rawContent)) {
+          scriptFiles.push({ filename: att.filename, savePath })
+        }
+      }
 
       if (needsPath(fileType) && (!deployPath || confidence === 'low')) {
         log.warn(`[fetch:${app.name}] Missing/low-confidence path for "${att.filename}" — queuing path dialog`)

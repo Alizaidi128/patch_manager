@@ -120,6 +120,10 @@ function initializeDb() {
   try { db.exec(`ALTER TABLE apps ADD COLUMN auto_fetch_interval INTEGER DEFAULT 0`) } catch {}
   try { db.exec(`ALTER TABLE apps ADD COLUMN last_fetched_at TEXT`) } catch {}
   try { db.exec(`ALTER TABLE apps ADD COLUMN last_war_label TEXT`) } catch {}
+  try { db.exec(`ALTER TABLE apps ADD COLUMN tomcat_manager_url TEXT`) } catch {}
+  try { db.exec(`ALTER TABLE apps ADD COLUMN tomcat_manager_user TEXT`) } catch {}
+  try { db.exec(`ALTER TABLE apps ADD COLUMN tomcat_manager_password TEXT`) } catch {}
+  try { db.exec(`ALTER TABLE apps ADD COLUMN tomcat_context_path TEXT`) } catch {}
   try { db.exec(`
     CREATE TABLE IF NOT EXISTS via_folder_ignored (
       source_folder  TEXT NOT NULL,

@@ -62,6 +62,7 @@ function makeDefault() {
     app_root_path: '', tomcat_service_name: '', smb_path: '',
     local_src_path: '', war_name: '', remote_war_path: '', tomcat_remote_path: '',
     sftp_server_path: '', patch_path: '', tomcat_restart_cmd: '', tomcat_run_as_user: '',
+    tomcat_manager_url: '', tomcat_manager_user: '', tomcat_manager_password: '', tomcat_context_path: '',
     db_host: '', db_port: 1521, db_service_name: '', db_user: '', db_password: '',
     auto_fetch_interval: 0,
     notes: ''
@@ -454,7 +455,7 @@ export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
               </p>
             </div>
 
-            <div className="form-group" style={{ marginBottom: 0 }}>
+            <div className="form-group">
               <label>Run Tomcat As User <span className="label-note">(optional — e.g. oracle)</span></label>
               <input
                 type="text" className="form-control mono" style={{ fontSize: 12 }}
@@ -470,6 +471,7 @@ export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
                 The <code>set +e</code> prefix prevents non-fatal errors (like pkill failing on a non-oracle PID) from aborting the sequence.
               </p>
             </div>
+
           </div>
         )}
 
@@ -554,6 +556,63 @@ export default function AppConfig({ app, onSaved, onDeleted, onCancel }) {
             </div>
           </>
         )}
+      </div>
+
+      {/* ── Tomcat Manager (Hot Reload) — available for all deployment modes ── */}
+      <div className="settings-section">
+        <h3>Tomcat Manager <span className="label-note">(optional — for Hot Reload)</span></h3>
+        <p className="form-hint" style={{ marginBottom: 12 }}>
+          When configured, a "Hot Reload" button appears that reloads only the app context via Tomcat Manager — no JVM restart, typically 2–3 seconds.
+          Requires a user with the <code>manager-script</code> role in <code>tomcat-users.xml</code>.
+        </p>
+
+        <div className="form-group">
+          <label>Manager URL</label>
+          <input
+            type="text" className="form-control mono" style={{ fontSize: 12 }}
+            value={form.tomcat_manager_url || ''}
+            onChange={e => set('tomcat_manager_url', e.target.value)}
+            placeholder="http://10.x.x.x:8080/manager/text"
+          />
+          <p className="form-hint">Base URL of the Tomcat Manager text interface.</p>
+        </div>
+
+        <div className="form-group">
+          <label>Context Path <span className="label-note">(app to reload)</span></label>
+          <input
+            type="text" className="form-control mono" style={{ fontSize: 12 }}
+            value={form.tomcat_context_path || ''}
+            onChange={e => set('tomcat_context_path', e.target.value)}
+            placeholder="/AICLCONVUAT"
+          />
+          <p className="form-hint">The context path of the web application as listed in Tomcat Manager (e.g. <code>/AICLCONVUAT</code>).</p>
+        </div>
+
+        <div className="form-group" style={{ marginBottom: 0 }}>
+          <label>Credentials</label>
+          <div className="form-grid-2">
+            <div>
+              <input
+                type="text" className="form-control mono" style={{ fontSize: 12 }}
+                value={form.tomcat_manager_user || ''}
+                onChange={e => set('tomcat_manager_user', e.target.value)}
+                placeholder="manager-username"
+                autoComplete="off"
+              />
+              <p className="form-hint" style={{ marginTop: 4 }}>Username</p>
+            </div>
+            <div>
+              <input
+                type="password" className="form-control mono" style={{ fontSize: 12 }}
+                value={form.tomcat_manager_password || ''}
+                onChange={e => set('tomcat_manager_password', e.target.value)}
+                placeholder="••••••••"
+                autoComplete="new-password"
+              />
+              <p className="form-hint" style={{ marginTop: 4 }}>Password</p>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* ── Oracle Database ── */}

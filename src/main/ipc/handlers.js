@@ -448,6 +448,35 @@ function registerHandlers() {
     }
   })
 
+  // ---- Tomcat Manager hot reload (context-level restart, no JVM restart) ----
+  ipcMain.handle('tomcat:hot-reload', async (_, { appId }) => {
+    const app = getAllApps().find(a => a.id === appId)
+    if (!app) return { success: false, error: 'App not found' }
+    const { tomcat_manager_url, tomcat_manager_user, tomcat_manager_password, tomcat_context_path } = app
+    if (!tomcat_manager_url || !tomcat_context_path)
+      return { success: false, error: 'Tomcat Manager URL and Context Path must be configured' }
+    if (!tomcat_manager_user)
+      return { success: false, error: 'Tomcat Manager username must be configured' }
+    try {
+      const base = tomcat_manager_url.replace(/\/$/, '')
+      const ctx  = tomcat_context_path.startsWith('/') ? tomcat_context_path : `/${tomcat_context_path}`
+      const url  = `${base}/reload?path=${encodeURIComponent(ctx)}`
+      const creds = Buffer.from(`${tomcat_manager_user}:${tomcat_manager_password || ''}`).toString('base64')
+      const res  = await fetch(url, {
+        headers: { Authorization: `Basic ${creds}` },
+        signal: AbortSignal.timeout(30000)
+      })
+      const text = (await res.text()).trim()
+      const ok   = text.startsWith('OK')
+      log.info('tomcat:hot-reload', { appId, url, status: res.status, text })
+      if (ok) return { success: true, output: text }
+      return { success: false, error: text || `HTTP ${res.status}` }
+    } catch (e) {
+      log.error('tomcat:hot-reload failed', e)
+      return { success: false, error: e.message }
+    }
+  })
+
   ipcMain.handle('rdp:open', async (_, { host, port }) => {
     const { exec } = require('child_process')
     const target = port && port !== 3389 ? `${host}:${port}` : host

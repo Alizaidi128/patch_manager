@@ -387,6 +387,8 @@ body {
 .btn-war:not(:disabled):hover    { background: #7c4db8; }
 .btn-tomcat { background: #1a6b3a; color: #fff; }
 .btn-tomcat:not(:disabled):hover { background: #1e8046; }
+.btn-hot-reload { background: #7a4a00; color: #fff; }
+.btn-hot-reload:not(:disabled):hover { background: #9a5d00; }
 .btn-revert { background: #7a4f00; color: #ffd580; border: 1px solid #b07000; }
 .btn-revert:not(:disabled):hover { background: #9a6500; }
 

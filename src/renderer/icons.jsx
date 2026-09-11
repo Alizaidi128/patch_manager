@@ -42,3 +42,4 @@ export function ShieldIcon(p)      { return <Icon {...p}><path d="M12 2 4 5v6c0 
 export function ArchiveIcon(p)     { return <Icon {...p}><rect x="2" y="3" width="20" height="4" rx="2"/><path d="M4 7v13a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7"/><path d="M10 12h4"/></Icon> }
 export function SearchIcon(p)         { return <Icon {...p}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></Icon> }
 export function AlertTriangleIcon(p)  { return <Icon {...p}><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4M12 17h.01"/></Icon> }
+export function ZapIcon(p)            { return <Icon {...p}><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></Icon> }

@@ -6,7 +6,7 @@ import DetectionResults from './DetectionResults'
 import DetectModeDialog from './DetectModeDialog'
 import {
   RocketIcon, TrashIcon, MailIcon, PackageIcon, ServerIcon,
-  UndoIcon, RefreshCwIcon, CheckCircleIcon, XCircleIcon, InboxIcon, EyeIcon, ArchiveIcon, SearchIcon
+  UndoIcon, RefreshCwIcon, CheckCircleIcon, XCircleIcon, InboxIcon, EyeIcon, ArchiveIcon, SearchIcon, ZapIcon
 } from '../icons.jsx'
 
 const STATUS_TABS = [
@@ -33,8 +33,9 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
   const [batchResult, setBatchResult] = useState(null)
   const [batchScriptResults, setBatchScriptResults] = useState(null) // [{ patchId, subject, scriptResult }]
   const [confirm, setConfirm]       = useState(null)
-  const [warState, setWarState]       = useState(null)
-  const [tomcatState, setTomcatState] = useState(null)
+  const [warState, setWarState]           = useState(null)
+  const [tomcatState, setTomcatState]     = useState(null)
+  const [hotReloadState, setHotReloadState] = useState(null)
   const [detectState, setDetectState] = useState(null) // { _appId, running, data, error }
   const [scriptFile, setScriptFile]   = useState(null)
   const [masterScript, setMasterScript] = useState(null)
@@ -279,6 +280,18 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
     )
   }
 
+  function handleHotReload() {
+    askConfirm(
+      `Hot-reload ${app.tomcat_context_path || 'app'} on ${app.name} via Tomcat Manager?`,
+      async () => {
+        setConfirm(null)
+        setHotReloadState({ _appId: app.id, running: true, result: null })
+        const res = await window.api.invoke('tomcat:hot-reload', { appId: app.id })
+        setHotReloadState({ _appId: app.id, running: false, result: res })
+      },
+      { confirmLabel: 'Hot Reload' }
+    )
+  }
 
   async function handleDetect() {
     setDetectState({ _appId: app.id, running: true, data: null, error: null })
@@ -380,12 +393,14 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
   ).length
 
   // Only show state that belongs to the currently viewed app
-  const curWarState    = warState?._appId    === app?.id ? warState    : null
-  const curTomcatState = tomcatState?._appId === app?.id ? tomcatState : null
-  const curDetectState = detectState?._appId === app?.id ? detectState : null
+  const curWarState       = warState?._appId       === app?.id ? warState       : null
+  const curTomcatState    = tomcatState?._appId    === app?.id ? tomcatState    : null
+  const curHotReloadState = hotReloadState?._appId === app?.id ? hotReloadState : null
+  const curDetectState    = detectState?._appId    === app?.id ? detectState    : null
 
-  const hasTomcat = app && (app.tomcat_remote_path || app.tomcat_service_name)
-  const hasWar    = app && app.deployment_mode === 'sftp' && app.war_name && app.local_src_path
+  const hasTomcat    = app && (app.tomcat_remote_path || app.tomcat_service_name)
+  const hasWar       = app && app.deployment_mode === 'sftp' && app.war_name && app.local_src_path
+  const hasHotReload = app && app.tomcat_manager_url && app.tomcat_context_path && app.tomcat_manager_user
 
   if (!app) {
     return (
@@ -503,6 +518,18 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
             >
               <ServerIcon size={13} />
               {curTomcatState?.running ? 'Restarting…' : 'Restart Tomcat'}
+            </button>
+          )}
+
+          {hasHotReload && (
+            <button
+              className="btn btn-hot-reload btn-sm icon-btn"
+              onClick={handleHotReload}
+              disabled={curHotReloadState?.running || serverOffline}
+              title={serverOffline ? 'Server unreachable' : `Hot-reload ${app.tomcat_context_path} via Tomcat Manager (fast, no JVM restart)`}
+            >
+              <ZapIcon size={13} />
+              {curHotReloadState?.running ? 'Reloading…' : 'Hot Reload'}
             </button>
           )}
 
@@ -719,6 +746,35 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
           {curTomcatState.result?.output && (
             <div className="war-steps">
               <div className="war-step-row" style={{ whiteSpace: 'pre-wrap' }}>{curTomcatState.result.output}</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {curHotReloadState && (
+        <div className={`war-panel ${curHotReloadState.running ? 'war-panel--running' : curHotReloadState.result?.success ? 'war-panel--ok' : 'war-panel--error'}`}>
+          <div className="war-panel-header">
+            <span className="war-panel-icon">
+              {curHotReloadState.running
+                ? <span className="war-spinner" />
+                : curHotReloadState.result?.success
+                  ? <CheckCircleIcon size={15} />
+                  : <XCircleIcon size={15} />}
+            </span>
+            <span className="war-panel-title">
+              {curHotReloadState.running
+                ? `Hot-reloading ${app.tomcat_context_path}…`
+                : curHotReloadState.result?.success
+                  ? `Hot reload complete — ${app.tomcat_context_path}`
+                  : `Hot reload failed: ${curHotReloadState.result?.error}`}
+            </span>
+            {!curHotReloadState.running && (
+              <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', padding: '2px 6px' }} onClick={() => setHotReloadState(null)}>✕</button>
+            )}
+          </div>
+          {curHotReloadState.result?.output && (
+            <div className="war-steps">
+              <div className="war-step-row">{curHotReloadState.result.output}</div>
             </div>
           )}
         </div>

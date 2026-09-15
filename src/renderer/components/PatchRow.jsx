@@ -97,7 +97,7 @@ function FileRow({ file, app, onMerge, onViewScript, onPathSaved, serverOffline 
             value={pathVal}
             onChange={e => setPathVal(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') savePath(e); if (e.key === 'Escape') cancelEdit(e) }}
-            placeholder="\\server\path\to\folder or full file path"
+            placeholder={file.file_type === 'xml_merge' ? 'App root folder — e.g. D:/Office/APPS/CONVUAT' : '\\\\server\\path\\to\\folder or full file path'}
           />
           <button className="btn btn-primary btn-sm" onClick={savePath} disabled={saving}>Save</button>
           <button className="btn btn-ghost btn-sm" onClick={cancelEdit}>✕</button>

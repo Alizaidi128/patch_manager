@@ -464,7 +464,7 @@ function registerHandlers() {
       const creds = Buffer.from(`${tomcat_manager_user}:${tomcat_manager_password || ''}`).toString('base64')
       const res  = await fetch(url, {
         headers: { Authorization: `Basic ${creds}` },
-        signal: AbortSignal.timeout(30000)
+        signal: AbortSignal.timeout(360000)
       })
       const text = (await res.text()).trim()
       const ok   = text.startsWith('OK')

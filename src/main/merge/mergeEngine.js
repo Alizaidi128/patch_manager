@@ -208,6 +208,15 @@ function resolveFilePath(deployTargetPath, originalFilename) {
   return exact  // Will produce a clear "File not found" error with the resolved path
 }
 
+// For xml_merge files the target is always the app's web.xml.
+// If deploy_target_path already points to a .xml file, use it directly.
+// Otherwise treat it as the app root directory and resolve WEB-INF/web.xml under it.
+function resolveXmlMergeTarget(deployTargetPath) {
+  const cleanPath = (deployTargetPath || '').trim()
+  if (path.extname(cleanPath).toLowerCase() === '.xml') return cleanPath
+  return path.join(cleanPath, 'WEB-INF', 'web.xml')
+}
+
 // ---- Public API ----
 
 async function previewMerge(patchFileId) {
@@ -221,9 +230,12 @@ async function previewMerge(patchFileId) {
 
   const snippet  = fs.readFileSync(file.local_path, 'utf8')
   // For props_merge pointing at a directory, detect the right target file from snippet content
+  // For xml_merge, always resolve to WEB-INF/web.xml under the app root
   const resolvedPath = (file.file_type === 'props_merge')
     ? resolveAllTargets(file.deploy_target_path, file.original_filename, snippet)[0]
-    : resolveFilePath(file.deploy_target_path, file.original_filename)
+    : (file.file_type === 'xml_merge')
+      ? resolveXmlMergeTarget(file.deploy_target_path)
+      : resolveFilePath(file.deploy_target_path, file.original_filename)
 
   // Block merge if the patch file is empty — merging nothing risks wiping the server file
   if (!snippet || snippet.trim().length === 0) {
@@ -316,9 +328,12 @@ async function applyMerge(patchFileId, mergedContent) {
   const snippet = fs.readFileSync(file.local_path, 'utf8')
 
   // For props_merge targeting a directory: apply to every .properties file in it
+  // For xml_merge: always resolve to WEB-INF/web.xml under the app root
   const targets = (file.file_type === 'props_merge')
     ? resolveAllTargets(file.deploy_target_path, file.original_filename, snippet)
-    : [resolveFilePath(file.deploy_target_path, file.original_filename)]
+    : (file.file_type === 'xml_merge')
+      ? [resolveXmlMergeTarget(file.deploy_target_path)]
+      : [resolveFilePath(file.deploy_target_path, file.original_filename)]
 
   let written = 0
   for (const resolvedPath of targets) {
@@ -375,7 +390,9 @@ async function autoMerge(patchFileId, { patchId, appId } = {}) {
 
   const targets = (file.file_type === 'props_merge')
     ? resolveAllTargets(file.deploy_target_path, file.original_filename, snippet)
-    : [resolveFilePath(file.deploy_target_path, file.original_filename)]
+    : (file.file_type === 'xml_merge')
+      ? [resolveXmlMergeTarget(file.deploy_target_path)]
+      : [resolveFilePath(file.deploy_target_path, file.original_filename)]
 
   let written = 0
   const errors = []
@@ -411,4 +428,4 @@ async function autoMerge(patchFileId, { patchId, appId } = {}) {
   return { success: true, appliedTo: written }
 }
 
-module.exports = { previewMerge, applyMerge, autoMerge, resolveFilePath }
+module.exports = { previewMerge, applyMerge, autoMerge, resolveFilePath, resolveXmlMergeTarget }

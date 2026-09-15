@@ -115,9 +115,6 @@ function backupAndCopySMB(src, dest) {
 
 function plainCopy(src, dest) {
   fs.mkdirSync(path.dirname(dest), { recursive: true })
-  if (fs.existsSync(dest)) {
-    fs.copyFileSync(dest, `${dest}.bak-${Date.now()}`)
-  }
   fs.copyFileSync(src, dest)
 }
 
@@ -217,7 +214,6 @@ async function deploySFTP(filesToDeploy, app) {
       const dest = resolveDestSFTP(item, app)
       const remoteDir = dest.replace(/\/[^/]+$/, '')
       try { await sftp.mkdir(remoteDir, true) } catch {}
-      try { await sftp.rename(dest, `${dest}.bak-${Date.now()}`) } catch {}
       await sftp.fastPut(item.local_path, dest)
       results.push({ id: item.id, dest, success: true })
     }
@@ -241,7 +237,6 @@ async function deployGiasSFTP(extractedDir, appRootPath, app) {
       const dest = `${appRootPath.replace(/\\/g, '/')}/${rel}`
       const remoteDir = dest.replace(/\/[^/]+$/, '')
       try { await sftp.mkdir(remoteDir, true) } catch {}
-      try { await sftp.rename(dest, `${dest}.bak-${Date.now()}`) } catch {}
       await sftp.fastPut(src, dest)
     }
     await sftp.end()

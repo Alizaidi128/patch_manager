@@ -111,13 +111,16 @@ export default function ManualPathDialog({ items, onClose, onComplete }) {
 
           <div className="mp-input-section">
             <label className="mp-input-label">
-              Deployment path on server
-              <span className="label-note"> — e.g. /opt/tomcat/webapps/ROOT/WEB-INF/</span>
+              {current.fileType === 'xml_merge' ? (
+                <>Deployment path — app root folder<span className="label-note"> — web.xml will be resolved at WEB-INF/web.xml inside it</span></>
+              ) : (
+                <>Deployment path on server<span className="label-note"> — e.g. /opt/tomcat/webapps/ROOT/WEB-INF/</span></>
+              )}
             </label>
             <input
               type="text"
               className="form-control mono"
-              placeholder="/opt/tomcat/webapps/ROOT/..."
+              placeholder={current.fileType === 'xml_merge' ? 'D:/Office/APPS/CONVUAT  or  /opt/tomcat/webapps/ROOT' : '/opt/tomcat/webapps/ROOT/...'}
               value={paths[index]}
               onChange={e => setPath(e.target.value)}
               autoFocus

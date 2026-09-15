@@ -2,7 +2,7 @@ const fs   = require('fs')
 const path = require('path')
 const log  = require('../utils/logger')
 const { getDb } = require('../db/schema')
-const { resolveFilePath } = require('../merge/mergeEngine')
+const { resolveFilePath, resolveXmlMergeTarget } = require('../merge/mergeEngine')
 const { previewMerge: propsPreview } = require('../merge/propsMerge')
 const { previewMerge: xmlPreview }   = require('../merge/xmlMerge')
 const { getPatchRootDir } = require('../patches/organizer')
@@ -163,7 +163,7 @@ function checkXmlMerge(file) {
   if (!file.local_path || !fs.existsSync(file.local_path)) return { status: 'unknown', detail: 'Patch file not found on disk' }
 
   try {
-    const resolvedPath = resolveFilePath(file.deploy_target_path, file.original_filename)
+    const resolvedPath = resolveXmlMergeTarget(file.deploy_target_path)
     if (!fs.existsSync(resolvedPath)) {
       return { status: 'pending', detail: 'File not found in app directory', resolvedPath }
     }

@@ -437,7 +437,8 @@ async function fetchForApp(app, sinceDate, toDate) {
           })
 
           // Universal SQL scan for non-db_script inner files (db_script handled above with continue)
-          if (!BINARY_EXTS.has(path.extname(innerName.toLowerCase()))) {
+          // Skip JSP/JS files — they're deployable code, not SQL scripts, even if they contain SQL-like statements.
+          if (innerType !== 'jsp' && innerType !== 'js_file' && !BINARY_EXTS.has(path.extname(innerName.toLowerCase()))) {
             let rawContent = ''
             try { rawContent = fs.readFileSync(innerPath, 'utf8') } catch {}
             if (rawContent && hasSqlContent(rawContent)) {
@@ -512,7 +513,8 @@ async function fetchForApp(app, sinceDate, toDate) {
 
       // Universal SQL scan: any text-readable file may contain SQL, regardless of its classified type.
       // db_script files are already handled above (they continue before reaching here).
-      if (!BINARY_EXTS.has(path.extname(att.filename.toLowerCase()))) {
+      // Skip JSP/JS files — they're deployable code, not SQL scripts, even if they contain SQL-like statements.
+      if (fileType !== 'jsp' && fileType !== 'js_file' && !BINARY_EXTS.has(path.extname(att.filename.toLowerCase()))) {
         let rawContent = ''
         try { rawContent = fs.readFileSync(savePath, 'utf8') } catch {}
         if (rawContent && hasSqlContent(rawContent)) {

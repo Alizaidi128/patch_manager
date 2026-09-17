@@ -360,11 +360,11 @@ async function fetchForApp(app, sinceDate, toDate) {
         } else if (hasSqlContent(rawContent)) {
           scriptFiles.push({ filename: att.filename, savePath })
         }
-        // Always register the original .txt file so it appears in the patch file list,
-        // whether or not SQL was detected (if SQL was found it also goes into compiled_scripts.txt)
+        // Register the original file as db_script (skipped) so View Script / Run DB Scripts
+        // buttons appear. deploy_status:skipped prevents it from being treated as deployable.
         createPatchFile({
           patch_id: patchId, original_filename: att.filename,
-          local_path: savePath, file_type: 'reference',
+          local_path: savePath, file_type: 'db_script',
           deploy_status: 'skipped', merge_status: null, deploy_target_path: null
         })
         continue
@@ -402,7 +402,7 @@ async function fetchForApp(app, sinceDate, toDate) {
             } else if (hasSqlContent(rawContent)) {
               scriptFiles.push({ filename: `${att.filename}/${innerName}`, savePath: innerPath })
             } else {
-              createPatchFile({ patch_id: patchId, original_filename: innerName, local_path: innerPath, file_type: 'reference', deploy_status: 'skipped', merge_status: null, deploy_target_path: null })
+              createPatchFile({ patch_id: patchId, original_filename: innerName, local_path: innerPath, file_type: 'db_script', deploy_status: 'skipped', merge_status: null, deploy_target_path: null })
             }
             continue
           }

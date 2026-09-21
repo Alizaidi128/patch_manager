@@ -41,6 +41,10 @@ const KNOWN_PATH_RULES = [
 // File extensions that are known binary formats — skip UTF-8 SQL scan for these
 const BINARY_EXTS = new Set(['.doc','.docx','.xls','.xlsx','.pdf','.ppt','.pptx','.zip','.rar','.war','.jar','.class'])
 
+// Pure SQL file extensions — include raw content without reformatting.
+// .txt files may mix prose with SQL so they go through extractBodyScript instead.
+const PURE_SQL_EXTS = new Set(['.sql','.ddl','.dml','.sh','.bat','.ps1'])
+
 // For SFTP apps files are deployed locally (local_src_path), not to the remote server path.
 function appLocalBase(app) {
   return app.deployment_mode === 'sftp'
@@ -354,11 +358,18 @@ async function fetchForApp(app, sinceDate, toDate) {
       if (fileType === 'db_script') {
         let rawContent = ''
         try { rawContent = fs.readFileSync(savePath, 'utf8') } catch {}
-        const extracted = extractBodyScript(rawContent)
-        if (extracted) {
-          scriptFiles.push({ filename: att.filename, savePath, content: extracted })
-        } else if (hasSqlContent(rawContent)) {
-          scriptFiles.push({ filename: att.filename, savePath })
+        const attExt = path.extname(att.filename.toLowerCase())
+        if (PURE_SQL_EXTS.has(attExt)) {
+          // Pure SQL file — include raw content as-is to preserve formatting and inline comments
+          if (hasSqlContent(rawContent)) scriptFiles.push({ filename: att.filename, savePath })
+        } else {
+          // Plain text — extract SQL statements and reformat (strips email prose, signatures, etc.)
+          const extracted = extractBodyScript(rawContent)
+          if (extracted) {
+            scriptFiles.push({ filename: att.filename, savePath, content: extracted })
+          } else if (hasSqlContent(rawContent)) {
+            scriptFiles.push({ filename: att.filename, savePath })
+          }
         }
         // Register the original file as db_script (skipped) so View Script / Run DB Scripts
         // buttons appear. deploy_status:skipped prevents it from being treated as deployable.
@@ -396,13 +407,22 @@ async function fetchForApp(app, sinceDate, toDate) {
           if (innerType === 'db_script') {
             let rawContent = ''
             try { rawContent = fs.readFileSync(innerPath, 'utf8') } catch {}
-            const extracted = extractBodyScript(rawContent)
-            if (extracted) {
-              scriptFiles.push({ filename: `${att.filename}/${innerName}`, content: extracted })
-            } else if (hasSqlContent(rawContent)) {
-              scriptFiles.push({ filename: `${att.filename}/${innerName}`, savePath: innerPath })
+            const innerExt = path.extname(innerName.toLowerCase())
+            if (PURE_SQL_EXTS.has(innerExt)) {
+              if (hasSqlContent(rawContent)) {
+                scriptFiles.push({ filename: `${att.filename}/${innerName}`, savePath: innerPath })
+              } else {
+                createPatchFile({ patch_id: patchId, original_filename: innerName, local_path: innerPath, file_type: 'db_script', deploy_status: 'skipped', merge_status: null, deploy_target_path: null })
+              }
             } else {
-              createPatchFile({ patch_id: patchId, original_filename: innerName, local_path: innerPath, file_type: 'db_script', deploy_status: 'skipped', merge_status: null, deploy_target_path: null })
+              const extracted = extractBodyScript(rawContent)
+              if (extracted) {
+                scriptFiles.push({ filename: `${att.filename}/${innerName}`, content: extracted })
+              } else if (hasSqlContent(rawContent)) {
+                scriptFiles.push({ filename: `${att.filename}/${innerName}`, savePath: innerPath })
+              } else {
+                createPatchFile({ patch_id: patchId, original_filename: innerName, local_path: innerPath, file_type: 'db_script', deploy_status: 'skipped', merge_status: null, deploy_target_path: null })
+              }
             }
             continue
           }

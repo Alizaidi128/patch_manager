@@ -4,7 +4,7 @@ const { getDb }                        = require('../db/schema')
 const { createPatch, createPatchFile } = require('../db/queries')
 const { getEmails, saveAttachment }    = require('./outlookBridge')
 const { classifyAttachment }           = require('./classifier')
-const { extractDeploymentPaths, extractBodyXml, extractBodyProps } = require('./pathParser')
+const { extractDeploymentPaths, extractFilePathMap, extractBodyXml, extractBodyProps } = require('./pathParser')
 const { createPatchFolder }            = require('../patches/organizer')
 const { extract }                      = require('../patches/extractor')
 const log                              = require('../utils/logger')
@@ -102,8 +102,9 @@ const SQL_STRUCT = /\b(?:SET|FROM|INTO|VALUES|WHERE|JOIN|INNER|LEFT|RIGHT|OUTER|
 function extractBodyScript(rawBody) {
   if (!rawBody || !SQL_KW.test(rawBody)) return null
 
-  // Lines that start SQL statements
-  const SQL_START = /^[ \t]*(DROP|CREATE|ALTER|INSERT|UPDATE|DELETE|MERGE|TRUNCATE|SELECT\s+\*|BEGIN|COMMIT|ROLLBACK|GRANT|REVOKE|EXECUTE|DECLARE|CALL(?=\s+\w+\s*\())\b/i
+  // Lines that start SQL statements.
+  // EXECUTE requires IMMEDIATE or a procedure-call pattern to avoid matching English "Execute the attached..."
+  const SQL_START = /^[ \t]*(DROP|CREATE|ALTER|INSERT|UPDATE|DELETE|MERGE|TRUNCATE|SELECT\s+\*|BEGIN|COMMIT|ROLLBACK|GRANT|REVOKE|EXECUTE(?=\s+(?:IMMEDIATE\b|\w[\w$.]*\s*\())|DECLARE|CALL(?=\s+\w+\s*\())\b/i
   // Lines that clearly belong to email/signature/log — not SQL
   const NON_SQL = /^[ \t]*(?:(?:From|Sent|To|Cc|Subject|Date)[ \t]*:|(?:Regards|Thanks|Sincerely|Cheers|Best|Dear|Kindly)\b|\[(?:DEBUG|ERROR|INFO|WARN|TRACE)\]|at\s+[\w$.]+|[\w.]+(?:Exception|Error)\s*:|-----)/i
 
@@ -116,11 +117,10 @@ function extractBodyScript(rawBody) {
   const flush = () => {
     if (current.length > 0) {
       const s = current.join('\n').trim()
-      // Accept as SQL if: has a structural keyword (SET/FROM/INTO/WHERE/etc.), OR
-      // spans multiple lines (real SQL rarely fits on one line), OR ends with semicolon.
-      // This rejects English prose like "Update properties of Bank Recon..." which has
-      // none of these markers.
-      if (s && SQL_KW.test(s) && (SQL_STRUCT.test(s) || current.length > 1 || s.endsWith(';'))) {
+      // Accept as SQL only if it ends with ; OR contains structural SQL keywords (SET/FROM/INTO/VALUES/WHERE/...).
+      // "current.length > 1" removed — multi-line email prose fools that heuristic just as easily.
+      // Semicolons and SQL structure are the real signals; line count is not.
+      if (s && SQL_KW.test(s) && (s.endsWith(';') || SQL_STRUCT.test(s))) {
         stmts.push(s)
       }
     }
@@ -339,6 +339,12 @@ async function fetchForApp(app, sinceDate, toDate) {
       scriptFiles.push({ filename: '(email body)', content: bodyScript })
     }
 
+    // Per-file path map: { 'filename.ext' (lowercase) → folder/path string }
+    // Used so each file gets its own folder when the body lists them separately,
+    // e.g. "fn_gl_tb_invoicedtl.jsp in gnled folder. pgl_se_tax_mapping.jsp in param folder."
+    const filePathMap  = extractFilePathMap(stripEmailQuotes(email.body || ''))
+    const detectedPaths = extractDeploymentPaths(stripEmailQuotes(email.body || ''))
+
     for (const att of classified) {
       const { fileType } = att
       const savePath = path.join(localFolder, att.filename)
@@ -444,9 +450,12 @@ async function fetchForApp(app, sinceDate, toDate) {
             confidence = 'high'
           }
           if (!deployPath) {
-            const detectedPaths = extractDeploymentPaths(email.body || '')
-            deployPath = detectedPaths.length > 0 ? buildDeployPath(detectedPaths[0].path, app) : null
-            confidence = detectedPaths.length > 0 ? detectedPaths[0].confidence : null
+            const perFile = filePathMap[innerName.toLowerCase()]
+            if (perFile) { deployPath = buildDeployPath(perFile, app); confidence = 'high' }
+          }
+          if (!deployPath && detectedPaths.length > 0) {
+            deployPath = buildDeployPath(detectedPaths[0].path, app)
+            confidence = detectedPaths[0].confidence
           }
 
               log.info(`[fetch:${app.name}] Archive file "${innerName}" (${innerType}) deployPath="${deployPath || '(none)'}" confidence=${confidence || 'none'}`)
@@ -508,13 +517,19 @@ async function fetchForApp(app, sinceDate, toDate) {
       let deployPath = knownDeployPath(att.filename, app)
       let confidence = deployPath ? 'fixed' : null
 
-      // 2. Fall back to email body path detection, then concatenate with app base
+      // 2. Per-file path from body (e.g. "filename.jsp in gnled folder") — file-specific, beats global
       if (!deployPath) {
-        const detectedPaths = extractDeploymentPaths(email.body || '')
-        if (detectedPaths.length > 0) {
-          deployPath = buildDeployPath(detectedPaths[0].path, app)
-          confidence = detectedPaths[0].confidence
+        const perFile = filePathMap[att.filename.toLowerCase()]
+        if (perFile) {
+          deployPath = buildDeployPath(perFile, app)
+          confidence = 'high'
         }
+      }
+
+      // 3. Fall back to global email body path detection (first detected path, applied to all)
+      if (!deployPath && detectedPaths.length > 0) {
+        deployPath = buildDeployPath(detectedPaths[0].path, app)
+        confidence = detectedPaths[0].confidence
       }
 
       const deployStatus = fileType === 'reference' ? 'skipped' : 'pending'

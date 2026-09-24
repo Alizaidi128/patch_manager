@@ -108,4 +108,39 @@ function extractBodyProps(rawBody) {
   return propLines.length >= 2 ? propLines.join('\n') : null
 }
 
-module.exports = { extractDeploymentPaths, extractBodyXml, extractBodyProps }
+// Build a filename → folder map from email body lines that associate a specific
+// file with a specific folder. Handles patterns like:
+//   "fn_gl_tb_invoicedtl.jsp in gnled folder."
+//   "2. pgl_se_tax_mapping.jsp in param folder."
+//   "place report.jsp into genins/"
+// Returns { 'filename.ext': 'folderName', ... } (keys are lowercase for comparison).
+function extractFilePathMap(emailBody) {
+  const body  = emailBody || ''
+  const map   = {}
+
+  // Pattern: <filename.ext> ... in/into <folder> [folder]
+  // Allows list markers (1. 2.) and arbitrary words between filename and "in"
+  const FILE_FOLDER = /(?:^|[\s\n])(?:\d+[.)]\s*)?([a-zA-Z0-9_\-.]+\.(?:jsp|sql|xml|js|properties|txt|sh|bat|ddl|dml))\b[^.\n]{0,80}?\bin(?:to)?\s+[`"']?([a-zA-Z0-9_\-]+)[`"']?(?:\s+folder)?/gim
+  let m
+  while ((m = FILE_FOLDER.exec(body)) !== null) {
+    const filename = m[1].toLowerCase()
+    const folder   = m[2]
+    if (!PATH_BLOCKLIST.has(folder.toLowerCase()) && folder.length >= 2) {
+      map[filename] = folder
+    }
+  }
+
+  // Pattern: place/put/copy <filename.ext> [to/in/into/at] <path>
+  const FILE_DEPLOY = /\b(?:deploy|place|put|copy)\s+([a-zA-Z0-9_\-.]+\.(?:jsp|sql|xml|js|properties|txt|sh|bat|ddl|dml))\b[^.\n]{0,40}?\b(?:to|in(?:to)?|at)\s+[`"']?([a-zA-Z0-9_\/\\\-]+)[`"']?/gim
+  while ((m = FILE_DEPLOY.exec(body)) !== null) {
+    const filename = m[1].toLowerCase()
+    const folder   = m[2]
+    if (!PATH_BLOCKLIST.has(folder.toLowerCase()) && folder.length >= 2 && !(filename in map)) {
+      map[filename] = folder
+    }
+  }
+
+  return map
+}
+
+module.exports = { extractDeploymentPaths, extractFilePathMap, extractBodyXml, extractBodyProps }

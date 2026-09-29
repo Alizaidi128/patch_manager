@@ -5,6 +5,20 @@ const log  = require('./src/main/utils/logger')
 process.on('uncaughtException',   err    => log.error('uncaughtException', err))
 process.on('unhandledRejection',  reason => log.error('unhandledRejection', reason))
 
+// ---- Single-instance lock ----
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (!mainWindow.isVisible()) mainWindow.show()
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+}
+
 let mainWindow
 let tray
 let isQuitting = false  // set true only on explicit Quit

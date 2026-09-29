@@ -6,7 +6,7 @@ import DetectionResults from './DetectionResults'
 import DetectModeDialog from './DetectModeDialog'
 import {
   RocketIcon, TrashIcon, MailIcon, PackageIcon, ServerIcon,
-  UndoIcon, RefreshCwIcon, CheckCircleIcon, XCircleIcon, InboxIcon, EyeIcon, ArchiveIcon, SearchIcon, ZapIcon
+  RefreshCwIcon, CheckCircleIcon, XCircleIcon, InboxIcon, EyeIcon, ArchiveIcon, SearchIcon, ZapIcon
 } from '../icons.jsx'
 
 const STATUS_TABS = [
@@ -359,19 +359,6 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
     setBatchResult([{ patchId: 0, skipped: true, reason: msg }])
   }
 
-  async function handleRevertToStaged() {
-    askConfirm(
-      'TESTING ONLY: Revert all deployed patches back to Pending?\nThis is for testing purposes only.',
-      async () => {
-        setConfirm(null)
-        const res = await window.api.invoke('debug:revert-patches', { appId: app.id })
-        load()
-        setBatchResult([{ patchId: 0, skipped: true, reason: `Reverted ${res.reverted} patch(es) to Pending` }])
-      },
-      { confirmLabel: 'Revert', danger: true }
-    )
-  }
-
   // Collect compiled script files from all selected patches
   function handleViewMasterScript() {
     const items = []
@@ -580,14 +567,6 @@ export default function PatchInbox({ app, onFetch, onMerge, onDeploy, refreshKey
             </button>
           )}
 
-          <button
-            className="btn btn-revert btn-sm icon-btn"
-            onClick={handleRevertToStaged}
-            title="[TEST ONLY] Revert all deployed patches back to staged"
-          >
-            <UndoIcon size={13} />
-            Revert (Test)
-          </button>
         </div>
       </div>
 

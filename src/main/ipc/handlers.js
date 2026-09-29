@@ -588,19 +588,6 @@ function registerHandlers() {
     return { success: true }
   }, ({ appId }) => `appId=${appId}`)
 
-  // ---- Dev/test: revert deployed patches back to staged ----
-  ipcMain.handle('debug:revert-patches', async (_, { appId }) => {
-    const db = require('../db/schema').getDb()
-    const patches = db.prepare(
-      `SELECT id FROM patches WHERE app_id = ? AND status = 'deployed'`
-    ).all(appId)
-    for (const p of patches) {
-      db.prepare(`UPDATE patches SET status = 'staged', deployed_at = NULL WHERE id = ?`).run(p.id)
-      db.prepare(`UPDATE patch_files SET deploy_status = 'pending' WHERE patch_id = ? AND deploy_status = 'deployed'`).run(p.id)
-    }
-    return { reverted: patches.length }
-  })
-
   // Sequential deploy for multiple patches (oldest email first)
   ipcMain.handle('deploy:batch', async (_, { patchIds }) => {
     const { previewDeploy, executeDeploy } = require('../deploy/deployEngine')

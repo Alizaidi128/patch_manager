@@ -482,7 +482,7 @@ async function fetchForApp(app, sinceDate, toDate) {
             if (isMerge && innerPath && fs.existsSync(innerPath)) {
               try { fileContent = fs.readFileSync(innerPath, 'utf8').slice(0, 1200).trim() } catch {}
             }
-            missingPaths.push({ patchFileId, patchId, appId: app.id, appName: app.name, filename: innerName, fileType: innerType, ticketRef, emailSubject: email.subject, emailBody: (email.body || '').slice(0, 800).trim(), fileContent, detectedPath: deployPath, confidence })
+            missingPaths.push({ patchFileId, patchId, appId: app.id, appName: app.name, appRootPath: app.smb_path || app.app_root_path || '', filename: innerName, fileType: innerType, ticketRef, emailSubject: email.subject, emailBody: (email.body || '').slice(0, 800).trim(), fileContent, detectedPath: deployPath, confidence })
           }
         }
         continue
@@ -566,6 +566,7 @@ async function fetchForApp(app, sinceDate, toDate) {
         }
         missingPaths.push({
           patchFileId, patchId, appId: app.id, appName: app.name,
+          appRootPath: app.smb_path || app.app_root_path || '',
           filename: att.filename, fileType, ticketRef,
           emailSubject: email.subject,
           emailBody:    (email.body || '').slice(0, 800).trim(),

@@ -140,6 +140,17 @@ function extractFilePathMap(emailBody) {
     }
   }
 
+  // Pattern: /folder/filename.ext or \folder\filename.ext (inline full paths listed in email body)
+  // e.g. "/gnled/ac_gl_pre_receipt_process_dtl.jsp"
+  const INLINE_PATH = /(?:^|[\s\n,;])[\\\/]([a-zA-Z0-9_\-]+)[\\\/]([a-zA-Z0-9_\-.]+\.(?:jsp|sql|xml|js|properties|txt|sh|bat|ddl|dml))(?=[\s\n,;.]|$)/gim
+  while ((m = INLINE_PATH.exec(body)) !== null) {
+    const folder   = m[1]
+    const filename = m[2].toLowerCase()
+    if (!PATH_BLOCKLIST.has(folder.toLowerCase()) && folder.length >= 2 && !(filename in map)) {
+      map[filename] = folder
+    }
+  }
+
   return map
 }
 

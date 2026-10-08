@@ -6,10 +6,20 @@ const TYPE_LABEL = {
   props_merge:'Properties Merge',
 }
 
+function initialPath(item) {
+  if (item.detectedPath) return item.detectedPath
+  if (item.appRootPath) {
+    // Pre-populate with root path + separator so user only types the subfolder
+    const sep = item.appRootPath.includes('/') ? '/' : '\\'
+    return item.appRootPath.replace(/[/\\]+$/, '') + sep
+  }
+  return ''
+}
+
 export default function ManualPathDialog({ items, onClose, onComplete }) {
-  // items: [{patchFileId, appName, filename, fileType, emailSubject, emailBody, detectedPath, confidence}]
+  // items: [{patchFileId, appName, appRootPath, filename, fileType, emailSubject, emailBody, detectedPath, confidence}]
   const [index, setIndex]   = useState(0)
-  const [paths, setPaths]   = useState(() => items.map(i => i.detectedPath || ''))
+  const [paths, setPaths]   = useState(() => items.map(initialPath))
   const [saving, setSaving] = useState(false)
   const [error, setError]   = useState(null)
 
@@ -114,7 +124,7 @@ export default function ManualPathDialog({ items, onClose, onComplete }) {
               {current.fileType === 'xml_merge' ? (
                 <>Deployment path — app root folder<span className="label-note"> — web.xml will be resolved at WEB-INF/web.xml inside it</span></>
               ) : (
-                <>Deployment path on server<span className="label-note"> — e.g. /opt/tomcat/webapps/ROOT/WEB-INF/</span></>
+                <>Deployment path on server<span className="label-note"> — append the subfolder after the root</span></>
               )}
             </label>
             <input
@@ -126,6 +136,9 @@ export default function ManualPathDialog({ items, onClose, onComplete }) {
               autoFocus
               onKeyDown={e => { if (e.key === 'Enter' && paths[index].trim()) saveCurrent() }}
             />
+            {current.appRootPath && !current.detectedPath && (
+              <div className="mp-root-hint">Root: <code>{current.appRootPath}</code> — type the subfolder after it</div>
+            )}
           </div>
 
           {error && <div className="alert alert-error" style={{ margin: '0 16px 8px' }}>{error}</div>}

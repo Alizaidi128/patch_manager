@@ -134,7 +134,17 @@ function FileRow({ file, app, onMerge, onViewScript, onPathSaved, serverOffline 
           {!file.deploy_target_path && canEditPath && (
             <button
               className="patch-file-no-path patch-file-no-path-btn"
-              onClick={e => { e.stopPropagation(); setEditing(true) }}
+              onClick={e => {
+                e.stopPropagation()
+                if (!pathVal) {
+                  const root = app?.smb_path || app?.app_root_path || ''
+                  if (root) {
+                    const sep = root.includes('/') ? '/' : '\\'
+                    setPathVal(root.replace(/[/\\]+$/, '') + sep)
+                  }
+                }
+                setEditing(true)
+              }}
               title="Click to set deployment path"
             >
               + set path

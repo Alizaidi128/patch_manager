@@ -4,7 +4,7 @@ const { getDb }                        = require('../db/schema')
 const { createPatch, createPatchFile } = require('../db/queries')
 const { getEmails, saveAttachment }    = require('./outlookBridge')
 const { classifyAttachment }           = require('./classifier')
-const { extractDeploymentPaths, extractFilePathMap, extractBodyXml, extractBodyProps } = require('./pathParser')
+const { extractDeploymentPaths, extractFilePathMap, extractKeywordFolderRules, folderForFile, extractBodyXml, extractBodyProps } = require('./pathParser')
 const { createPatchFolder }            = require('../patches/organizer')
 const { extract }                      = require('../patches/extractor')
 const log                              = require('../utils/logger')
@@ -343,6 +343,7 @@ async function fetchForApp(app, sinceDate, toDate) {
     // Used so each file gets its own folder when the body lists them separately,
     // e.g. "fn_gl_tb_invoicedtl.jsp in gnled folder. pgl_se_tax_mapping.jsp in param folder."
     const filePathMap  = extractFilePathMap(stripEmailQuotes(email.body || ''))
+    const keywordRules = extractKeywordFolderRules(stripEmailQuotes(email.body || ''))
     const detectedPaths = extractDeploymentPaths(stripEmailQuotes(email.body || ''))
 
     for (const att of classified) {
@@ -450,7 +451,7 @@ async function fetchForApp(app, sinceDate, toDate) {
             confidence = 'high'
           }
           if (!deployPath) {
-            const perFile = filePathMap[innerName.toLowerCase()]
+            const perFile = folderForFile(innerName, filePathMap, keywordRules)
             if (perFile) { deployPath = buildDeployPath(perFile, app); confidence = 'high' }
           }
           if (!deployPath && detectedPaths.length > 0) {
@@ -519,7 +520,7 @@ async function fetchForApp(app, sinceDate, toDate) {
 
       // 2. Per-file path from body (e.g. "filename.jsp in gnled folder") — file-specific, beats global
       if (!deployPath) {
-        const perFile = filePathMap[att.filename.toLowerCase()]
+        const perFile = folderForFile(att.filename, filePathMap, keywordRules)
         if (perFile) {
           deployPath = buildDeployPath(perFile, app)
           confidence = 'high'

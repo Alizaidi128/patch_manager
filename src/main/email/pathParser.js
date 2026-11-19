@@ -40,13 +40,13 @@ function extractDeploymentPaths(emailBody) {
 
   // HIGH: explicit path segments with known roots — also match bare known folder names preceded by \\
   const filePaths = body.match(
-    /(?:WEB-INF|webapps|ROOT|genins|gnled|glas|di|wf|healthins|secman|shmalib|shsm|para|param|assets|gias|modules)[\/\\][^\s\n"'<>*?]*/gi
+    /(?:WEB-INF|webapps|ROOT|genins|gnled|glas|di|wf|healthins|secman|shmalib|shsm|param|para|assets|gias|modules)[\/\\][^\s\n"'<>*?]*/gi
   ) || []
   filePaths.forEach(p => add(p, 'high'))
 
   // HIGH: bare known folder names (\\genins or \\genins\*.jsp → "genins")
   const knownFolders = body.match(
-    /(?:\\{1,2}|\/)?(genins|gnled|glas|di|wf|healthins|secman|shmalib|shsm|para|param|WEB-INF)(?:[\\\/][^\s\n"'<>]*)?/gi
+    /(?:\\{1,2}|\/)?(genins|gnled|glas|di|wf|healthins|secman|shmalib|shsm|param|para|WEB-INF)(?![a-zA-Z0-9_])(?:[\\\/][^\s\n"'<>]*)?/gi
   ) || []
   knownFolders.forEach(p => add(p, 'high'))
 
@@ -154,4 +154,31 @@ function extractFilePathMap(emailBody) {
   return map
 }
 
-module.exports = { extractDeploymentPaths, extractFilePathMap, extractBodyXml, extractBodyProps }
+// Group rules like "imageview jsps in 'di' folder and voucher jsps in 'gnled' folder".
+// Returns [{ keyword, folder }]; a file matches a rule when its name contains the keyword.
+function extractKeywordFolderRules(emailBody) {
+  const body  = (emailBody || '').replace(/[‘’“”]/g, "'")
+  const rules = []
+  const RULE  = /\b([a-zA-Z0-9_\-]{3,})\s+(?:jsps?|files?|scripts?|pages?|js|xmls?)\s+(?:in|into|to|at)\s+(?:the\s+)?[`"']?([a-zA-Z0-9_\-]+)[`"']?(?:\s+folder)?/gi
+  let m
+  while ((m = RULE.exec(body)) !== null) {
+    const keyword = m[1].toLowerCase()
+    const folder  = m[2]
+    if (PATH_BLOCKLIST.has(keyword) || PATH_BLOCKLIST.has(folder.toLowerCase()) || folder.length < 2) continue
+    if (['attached', 'following', 'above', 'below', 'these', 'those', 'all', 'other', 'remaining', 'rest', 'jsp', 'jsps', 'sql', 'xml', 'js', 'new', 'updated', 'modified', 'latest', 'deploy', 'place', 'copy', 'put'].includes(keyword)) continue
+    rules.push({ keyword, folder })
+  }
+  return rules
+}
+
+function folderForFile(filename, filePathMap, keywordRules) {
+  const lower = (filename || '').toLowerCase()
+  if (filePathMap && filePathMap[lower]) return filePathMap[lower]
+  // Longest keyword wins so "imageview_ajax" beats "image" when both exist
+  const hits = (keywordRules || []).filter(r => lower.includes(r.keyword))
+  if (!hits.length) return null
+  hits.sort((a, b) => b.keyword.length - a.keyword.length)
+  return hits[0].folder
+}
+
+module.exports = { extractDeploymentPaths, extractFilePathMap, extractKeywordFolderRules, folderForFile, extractBodyXml, extractBodyProps }
